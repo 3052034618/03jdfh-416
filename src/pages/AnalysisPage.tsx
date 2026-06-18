@@ -9,6 +9,7 @@ import CurseClarity from '@/components/analysis/CurseClarity';
 import PacingAnalysis from '@/components/analysis/PacingAnalysis';
 import RouteFearSummaryList from '@/components/analysis/RouteFearSummary';
 import Typewriter from '@/components/display/Typewriter';
+import ClassroomReportPanel from '@/components/display/ClassroomReportPanel';
 import type { AnalysisResult, VoteRound, ClassroomPath } from '@/types/story';
 
 export default function AnalysisPage() {
@@ -85,6 +86,52 @@ export default function AnalysisPage() {
       0
     );
 
+    // 学生参与统计
+    const voterStats: Array<{
+      name: string;
+      totalRounds: number;
+      scenes: string[];
+      votesCast: { sceneTitle: string; choiceText: string; isWinning: boolean }[];
+    }> = [];
+
+    const voterMap: Record<string, {
+      totalRounds: number;
+      scenes: Set<string>;
+      votesCast: { sceneTitle: string; choiceText: string; isWinning: boolean }[];
+    }> = {};
+
+    voteRounds.forEach(round => {
+      round.options.forEach(opt => {
+        opt.voters.forEach(voter => {
+          if (!voterMap[voter]) {
+            voterMap[voter] = {
+              totalRounds: 0,
+              scenes: new Set(),
+              votesCast: [],
+            };
+          }
+          voterMap[voter].totalRounds++;
+          voterMap[voter].scenes.add(round.sceneTitle);
+          voterMap[voter].votesCast.push({
+            sceneTitle: round.sceneTitle,
+            choiceText: opt.choiceText,
+            isWinning: opt.choiceId === round.winningChoiceId,
+          });
+        });
+      });
+    });
+
+    Object.entries(voterMap)
+      .sort((a, b) => b[1].totalRounds - a[1].totalRounds)
+      .forEach(([name, stat]) => {
+        voterStats.push({
+          name,
+          totalRounds: stat.totalRounds,
+          scenes: [...stat.scenes],
+          votesCast: stat.votesCast,
+        });
+      });
+
     return {
       totalVotes,
       uniqueVoters: uniqueVoters.size,
@@ -93,6 +140,7 @@ export default function AnalysisPage() {
       totalManualChoices,
       totalVoteChoices,
       totalClassroomSessions: classroomPaths.length,
+      voterStats,
     };
   }, [voteRounds, classroomPaths, cards]);
 
@@ -127,6 +175,7 @@ export default function AnalysisPage() {
             </h1>
           </div>
           <div className="flex items-center gap-2">
+            <ClassroomReportPanel mode="analysis" />
             <button
               onClick={handleResetClassroom}
               className="horror-btn text-sm"
@@ -306,6 +355,66 @@ export default function AnalysisPage() {
                               </div>
                             );
                           })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {classroomStats.voterStats.length > 0 && (
+              <div className="mt-5">
+                <h4 className="text-sm font-gothic text-horror-text mb-3 flex items-center gap-2">
+                  <Users size={14} className="text-blue-400" />
+                  学生参与统计 ({classroomStats.voterStats.length} 人)
+                </h4>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-72 overflow-y-auto pr-1">
+                  {classroomStats.voterStats.map((student, idx) => {
+                    const winRate = student.votesCast.length > 0
+                      ? Math.round(student.votesCast.filter(v => v.isWinning).length / student.votesCast.length * 100)
+                      : 0;
+                    return (
+                      <div key={student.name} className="p-3 bg-horror-bg rounded-lg border border-horror-border hover:border-horror-accent/50 transition-colors">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold shrink-0
+                              ${idx === 0 ? 'bg-yellow-500/20 text-yellow-400' :
+                                idx === 1 ? 'bg-gray-400/20 text-gray-300' :
+                                idx === 2 ? 'bg-orange-500/20 text-orange-400' :
+                                'bg-blue-500/20 text-blue-400'}`}>
+                              {idx + 1}
+                            </div>
+                            <p className="text-sm text-horror-text font-medium truncate">{student.name}</p>
+                          </div>
+                          <div className="text-right shrink-0 ml-2">
+                            <p className="text-lg font-gothic text-horror-accent leading-none">{student.totalRounds}</p>
+                            <p className="text-[9px] text-horror-textMuted">轮投票</p>
+                          </div>
+                        </div>
+                        <div className="space-y-1">
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="text-horror-textMuted">参与场景</span>
+                            <span className="text-horror-text">{student.scenes.length} 个</span>
+                          </div>
+                          <div className="flex items-center justify-between text-[10px]">
+                            <span className="text-horror-textMuted">命中率</span>
+                            <span className={`${winRate >= 70 ? 'text-green-400' : winRate >= 40 ? 'text-yellow-400' : 'text-horror-textMuted'}`}>
+                              {winRate}%
+                            </span>
+                          </div>
+                          <div className="text-[10px] text-horror-textMuted mt-1.5 pt-1.5 border-t border-horror-border/50">
+                            <span className="opacity-60">投票记录：</span>
+                            {student.votesCast.slice(0, 3).map((v, i) => (
+                              <span key={i} className="ml-1">
+                                {v.isWinning ? '✓' : '✗'}
+                                <span className="text-horror-text/70">{v.sceneTitle.slice(0, 4)}</span>
+                              </span>
+                            ))}
+                            {student.votesCast.length > 3 && (
+                              <span className="opacity-50 ml-1">…+{student.votesCast.length - 3}</span>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );

@@ -1,10 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { RotateCcw, SkipForward, Skull, Eye, Vote, Users, Play, Pause } from 'lucide-react';
+import { RotateCcw, SkipForward, Skull, Eye, Vote, Users, Play, Pause, Trophy } from 'lucide-react';
 import { useStoryStore } from '@/store/useStoryStore';
 import Typewriter from './Typewriter';
 import VotingPanel from './VotingPanel';
 import VoteHistoryPanel from './VoteHistoryPanel';
 import PlaybackPanel from './PlaybackPanel';
+import ClassroomReportPanel from './ClassroomReportPanel';
 import type { SceneCard, ChoiceCard, CurseCard, EndingCard, ClassroomPath, ChoiceSource, PathStep } from '@/types/story';
 
 export default function PlayerView() {
@@ -32,6 +33,7 @@ export default function PlayerView() {
   // Playback state
   const [playbackPath, setPlaybackPath] = useState<ClassroomPath | null>(null);
   const [playbackStep, setPlaybackStep] = useState(0);
+  const [playbackPhase, setPlaybackPhase] = useState<'scene' | 'feedback' | 'ending' | 'summary'>('scene');
   const [playbackAuto, setPlaybackAuto] = useState(false);
   const playbackTimerRef = useRef<number | null>(null);
 
@@ -97,26 +99,70 @@ export default function PlayerView() {
     }
   }, [currentCard, saveCurrentPath, playbackPath]);
 
-  // Playback auto advance
+  // Playback auto advance - 重构为按阶段自动推进
   useEffect(() => {
     if (!playbackAuto || !playbackPath) return;
-    const isLast = playbackStep >= playbackPath.steps.length - 1;
-    if (isLast) {
+    if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
+
+    const step = playbackPath.steps[playbackStep];
+    if (!step) return;
+    const card = cards.find(c => c.id === step.cardId);
+    if (!card) return;
+
+    const isLastStep = playbackStep >= playbackPath.steps.length - 1;
+
+    if (playbackPhase === 'summary') {
       setPlaybackAuto(false);
       return;
     }
-    const card = cards.find(c => c.id === playbackPath.steps[playbackStep]?.cardId);
+
     let delay = 3000;
-    if (card?.type === 'scene') delay = 6000;
-    if (card?.type === 'choice') delay = 3500;
-    if (card?.type === 'ending') delay = 8000;
+
+    if (playbackPhase === 'scene') {
+      delay = Math.max(4000, (card.type === 'scene' ? (card as SceneCard).description.length * 40 : 4000));
+    } else if (playbackPhase === 'feedback') {
+      delay = 3500;
+    } else if (playbackPhase === 'ending') {
+      delay = 8000;
+    }
+
     playbackTimerRef.current = window.setTimeout(() => {
-      setPlaybackStep(s => Math.min(s + 1, playbackPath.steps.length - 1));
+      if (playbackPhase === 'scene') {
+        // 场景播放完，如果下一步是 choice → 进入 feedback 阶段；如果是 ending → 进入 ending 阶段
+        const nextStep = playbackPath.steps[playbackStep + 1];
+        if (nextStep) {
+          const nextCard = cards.find(c => c.id === nextStep.cardId);
+          if (nextCard?.type === 'choice') {
+            setPlaybackPhase('feedback');
+          } else if (nextCard?.type === 'ending') {
+            setPlaybackStep(s => s + 1);
+            setPlaybackPhase('ending');
+          }
+        } else if (isLastStep && card.type === 'ending') {
+          setPlaybackPhase('ending');
+        }
+      } else if (playbackPhase === 'feedback') {
+        // 反馈播放完，前进到下一步（scene 或 ending）
+        if (playbackStep < playbackPath.steps.length - 1) {
+          setPlaybackStep(s => s + 1);
+          const nextStep = playbackPath.steps[playbackStep + 1];
+          const nextCard = cards.find(c => c.id === nextStep?.cardId);
+          if (nextCard?.type === 'scene') {
+            setPlaybackPhase('scene');
+          } else if (nextCard?.type === 'ending') {
+            setPlaybackPhase('ending');
+          }
+        }
+      } else if (playbackPhase === 'ending') {
+        // 结局播放完，进入汇总
+        setPlaybackPhase('summary');
+      }
     }, delay);
+
     return () => {
       if (playbackTimerRef.current) clearTimeout(playbackTimerRef.current);
     };
-  }, [playbackAuto, playbackStep, playbackPath, cards]);
+  }, [playbackAuto, playbackStep, playbackPath, playbackPhase, cards]);
 
   const handleSceneComplete = () => {
     if (playbackPath) {
@@ -213,27 +259,71 @@ export default function PlayerView() {
   const handleStartPlayback = (path: ClassroomPath) => {
     setPlaybackPath(path);
     setPlaybackStep(0);
+    setPlaybackPhase('scene');
     setPlaybackAuto(false);
     setPhase('scene');
     setShowChoices(false);
     setCurrentFeedback('');
     setTriggeredCurse(null);
-    setCurrentFeedback('');
   };
 
   const playbackPrev = () => {
     setPlaybackAuto(false);
-    setPlaybackStep(s => Math.max(0, s - 1));
-    setCurrentFeedback('');
-    setPhase('scene');
+    if (playbackPhase === 'feedback') {
+      setPlaybackPhase('scene');
+      setCurrentFeedback('');
+    } else if (playbackPhase === 'ending' || playbackPhase === 'summary') {
+      setPlaybackPhase('feedback');
+      const step = playbackPath?.steps[playbackStep];
+      if (step) {
+        const card = cards.find(c => c.id === step.cardId);
+        if (card?.type === 'ending') {
+          // 回到上一个 choice 的 feedback
+          setPlaybackStep(s => Math.max(0, s - 1));
+        } else if (card?.type === 'choice') {
+          setCurrentFeedback((card as ChoiceCard).immediateFeedback);
+        }
+      }
+    } else if (playbackPhase === 'scene' && playbackStep > 0) {
+      setPlaybackStep(s => Math.max(0, s - 1));
+      setCurrentFeedback('');
+    }
   };
 
   const playbackNext = () => {
     if (!playbackPath) return;
-    if (playbackStep >= playbackPath.steps.length - 1) return;
-    setPlaybackStep(s => Math.min(s + 1, playbackPath.steps.length - 1));
-    setCurrentFeedback('');
-    setPhase('scene');
+    setPlaybackAuto(false);
+
+    if (playbackPhase === 'scene') {
+      const nextStep = playbackPath.steps[playbackStep + 1];
+      if (nextStep) {
+        const nextCard = cards.find(c => c.id === nextStep.cardId);
+        if (nextCard?.type === 'choice') {
+          setPlaybackPhase('feedback');
+          setCurrentFeedback((nextCard as ChoiceCard).immediateFeedback);
+        } else if (nextCard?.type === 'ending') {
+          setPlaybackStep(s => s + 1);
+          setPlaybackPhase('ending');
+        }
+      }
+    } else if (playbackPhase === 'feedback') {
+      if (playbackStep < playbackPath.steps.length - 1) {
+        setPlaybackStep(s => s + 1);
+        const nextStep = playbackPath.steps[playbackStep + 1];
+        const nextCard = cards.find(c => c.id === nextStep?.cardId);
+        if (nextCard?.type === 'scene') {
+          setPlaybackPhase('scene');
+          setCurrentFeedback('');
+        } else if (nextCard?.type === 'ending') {
+          setPlaybackPhase('ending');
+          setCurrentFeedback('');
+        }
+      }
+    } else if (playbackPhase === 'ending') {
+      setPlaybackPhase('summary');
+    } else if (playbackPhase === 'summary') {
+      // 已经在汇总，不能再前进
+    }
   };
 
   const renderSceneContent = () => {
@@ -509,6 +599,279 @@ export default function PlayerView() {
     );
   };
 
+  // 回放模式专用渲染
+  const renderPlaybackScene = () => {
+    if (!playbackPath) return null;
+    const step = playbackPath.steps[playbackStep];
+    if (!step) return null;
+
+    const card = cards.find(c => c.id === step.cardId);
+    if (!card) return null;
+
+    if (playbackPhase === 'summary') {
+      return renderPlaybackSummary();
+    }
+
+    if (playbackPhase === 'scene' && card.type === 'scene') {
+      const scene = card as SceneCard;
+      return (
+        <div className="animate-fade-in">
+          {playbackStep > 0 && (
+            <div className="mb-4">
+              <span className={`text-xs px-2 py-1 rounded flex items-center gap-1 inline-flex
+                ${step.source === 'vote' ? 'bg-horror-blood/10 text-horror-bloodLight border border-horror-blood/30' : 'bg-blue-500/10 text-blue-400 border border-blue-500/30'}`}>
+                {step.source === 'vote' ? (
+                  <>
+                    <Vote size={12} />
+                    通过投票选择
+                    {step.voteRoundId && (
+                      <> · {voteRounds.find(r => r.id === step.voteRoundId)?.totalVotes || 0} 人参与</>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Eye size={12} />
+                    老师手动选择
+                  </>
+                )}
+              </span>
+            </div>
+          )}
+          <div className="mb-6">
+            <h2 className="font-gothic text-3xl text-horror-text text-shadow-candle mb-2">
+              {scene.title}
+            </h2>
+            {scene.atmosphere && (
+              <p className="text-horror-textMuted text-sm italic">
+                氛围：{scene.atmosphere}
+              </p>
+            )}
+          </div>
+          <div className="space-y-4 text-lg leading-relaxed">
+            <Typewriter
+              text={scene.description}
+              speed={40}
+              className="text-horror-text"
+            />
+            {scene.environmentDetails && (
+              <Typewriter
+                text={scene.environmentDetails}
+                speed={35}
+                startDelay={500}
+                className="text-horror-textMuted italic"
+              />
+            )}
+            {scene.hasRedHerring && scene.redHerringText && (
+              <Typewriter
+                text={scene.redHerringText}
+                speed={35}
+                startDelay={1000}
+                className="text-horror-accent animate-pulse-slow"
+              />
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    if (playbackPhase === 'feedback') {
+      const nextStep = playbackPath.steps[playbackStep + 1];
+      const choiceCard = nextStep?.cardId
+        ? cards.find(c => c.id === nextStep.cardId) as ChoiceCard
+        : (card.type === 'choice' ? card as ChoiceCard : null);
+
+      if (!choiceCard) return null;
+
+      return (
+        <div className="animate-fade-in">
+          <div className="mb-4">
+            <span className={`text-xs px-2 py-0.5 rounded bg-horror-blood/20 text-horror-bloodLight flex items-center gap-1 inline-flex
+              ${choiceCard.type === 'choice' ? '' : ''}`}>
+              {nextStep?.source === 'vote' ? <Vote size={12} /> : <Eye size={12} />}
+              回放 · {nextStep?.source === 'vote' ? '当时通过投票选择' : '当时手点选择'}
+              {nextStep?.voteRoundId && (
+                <> · {voteRounds.find(r => r.id === nextStep.voteRoundId)?.totalVotes || 0} 人参与</>
+              )}
+            </span>
+          </div>
+          <h3 className="font-gothic text-2xl text-horror-bloodLight mb-4">{choiceCard.text}</h3>
+          <Typewriter
+            text={choiceCard.immediateFeedback}
+            speed={45}
+            className="text-xl text-horror-text leading-relaxed"
+          />
+        </div>
+      );
+    }
+
+    if (playbackPhase === 'ending' && card.type === 'ending') {
+      const ending = card as EndingCard;
+      return (
+        <div className="animate-fade-in text-center">
+          <div className="mb-6">
+            <span className="text-6xl">
+              {ending.endingType === 'good' ? '🌅' :
+               ending.endingType === 'bad' ? '💀' :
+               ending.endingType === 'twist' ? '🌀' : '🌙'}
+            </span>
+          </div>
+          <h2 className="font-gothic text-4xl text-horror-text text-shadow-blood mb-4">
+            {ending.title}
+          </h2>
+          <div className="max-w-2xl mx-auto space-y-6">
+            <Typewriter
+              text={ending.description}
+              speed={50}
+              className="text-xl text-horror-text leading-relaxed"
+              startDelay={500}
+            />
+            {ending.callback && (
+              <Typewriter
+                text={ending.callback}
+                speed={45}
+                startDelay={2000}
+                className="text-horror-accent italic text-lg border-l-4 border-horror-accent pl-4 text-left"
+              />
+            )}
+          </div>
+          <p className="mt-4 text-sm text-horror-textMuted animate-pulse">
+            播放完毕后将显示路线汇总...
+          </p>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  // 回放路线汇总
+  const renderPlaybackSummary = () => {
+    if (!playbackPath) return null;
+
+    const scenes = playbackPath.steps
+      .map(s => cards.find(c => c.id === s.cardId))
+      .filter(c => c?.type === 'scene') as SceneCard[];
+    const choices = playbackPath.steps
+      .map(s => ({ step: s, card: cards.find(c => c.id === s.cardId) }))
+      .filter(x => x.card?.type === 'choice') as { step: PathStep; card: ChoiceCard }[];
+    const ending = playbackPath.steps
+      .map(s => cards.find(c => c.id === s.cardId))
+      .find(c => c?.type === 'ending') as EndingCard | undefined;
+
+    const voteSteps = choices.filter(x => x.step.source === 'vote');
+    const manualSteps = choices.filter(x => x.step.source === 'manual');
+
+    return (
+      <div className="animate-fade-in">
+        <div className="text-center mb-6">
+          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-purple-500/20 border border-purple-500/30 mb-4">
+            <Trophy size={18} className="text-yellow-400" />
+            <span className="font-gothic text-lg text-purple-300">路线播放完毕</span>
+          </div>
+          <h2 className="font-gothic text-3xl text-horror-text text-shadow-blood mb-2">
+            {playbackPath.endingTitle || '未命名结局'}
+          </h2>
+          {ending?.endingType && (
+            <p className={`text-sm ${
+              ending.endingType === 'good' ? 'text-green-400' :
+              ending.endingType === 'bad' ? 'text-horror-bloodLight' :
+              ending.endingType === 'twist' ? 'text-purple-400' : 'text-yellow-400'
+            }`}>
+              {ending.endingType === 'good' ? '好结局' :
+               ending.endingType === 'bad' ? '坏结局' :
+               ending.endingType === 'twist' ? '反转结局' : '中性结局'}
+            </p>
+          )}
+        </div>
+
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <div className="text-center p-3 bg-horror-bg rounded-lg border border-horror-border">
+            <p className="text-2xl font-gothic text-horror-accent mb-1">{scenes.length}</p>
+            <p className="text-[11px] text-horror-textMuted">场景数</p>
+          </div>
+          <div className="text-center p-3 bg-horror-bg rounded-lg border border-horror-border">
+            <p className="text-2xl font-gothic text-horror-bloodLight mb-1">{voteSteps.length}</p>
+            <p className="text-[11px] text-horror-textMuted flex items-center justify-center gap-1">
+              <Vote size={11} /> 投票决定
+            </p>
+          </div>
+          <div className="text-center p-3 bg-horror-bg rounded-lg border border-horror-border">
+            <p className="text-2xl font-gothic text-blue-400 mb-1">{manualSteps.length}</p>
+            <p className="text-[11px] text-horror-textMuted flex items-center justify-center gap-1">
+              <Eye size={11} /> 手点选择
+            </p>
+          </div>
+        </div>
+
+        <div className="horror-card p-4 mb-6">
+          <h4 className="font-gothic text-sm text-horror-text mb-3">完整路线</h4>
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            {playbackPath.steps.map((s, i) => {
+              const c = cards.find(cc => cc.id === s.cardId);
+              if (!c) return null;
+              if (c.type === 'scene') {
+                return (
+                  <span key={i} className="px-2 py-1 rounded bg-horror-surface border border-horror-border text-horror-text">
+                    {(c as SceneCard).title?.slice(0, 8) || '场景'}
+                  </span>
+                );
+              }
+              if (c.type === 'choice') {
+                return (
+                  <span key={i} className={`px-2 py-1 rounded border flex items-center gap-1
+                    ${s.source === 'vote' ? 'bg-horror-blood/10 border-horror-blood/30 text-horror-bloodLight' : 'bg-blue-500/10 border-blue-500/30 text-blue-400'}`}>
+                    {s.source === 'vote' ? <Vote size={10} /> : <Eye size={10} />}
+                    {(c as ChoiceCard).text.slice(0, 6)}
+                  </span>
+                );
+              }
+              if (c.type === 'ending') {
+                return (
+                  <span key={i} className="px-2 py-1 rounded bg-purple-500/10 border border-purple-500/30 text-purple-300">
+                    🏁 {(c as EndingCard).title?.slice(0, 8)}
+                  </span>
+                );
+              }
+              return null;
+            })}
+          </div>
+        </div>
+
+        {voteSteps.length > 0 && (
+          <div className="horror-card p-4">
+            <h4 className="font-gothic text-sm text-horror-text mb-3 flex items-center gap-2">
+              <Vote size={14} className="text-horror-bloodLight" />
+              投票轮次记录
+            </h4>
+            <div className="space-y-2">
+              {voteSteps.map((x, i) => {
+                const round = x.step.voteRoundId
+                  ? voteRounds.find(r => r.id === x.step.voteRoundId)
+                  : null;
+                return (
+                  <div key={i} className="p-2 bg-horror-bg rounded border border-horror-border text-xs">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-horror-text font-medium">{round?.sceneTitle || '场景投票'}</span>
+                      <span className="text-horror-textMuted">{round?.totalVotes || 0} 人参与</span>
+                    </div>
+                    <p className="text-horror-bloodLight">
+                      胜出：{round?.winningChoiceText || x.card.text.slice(0, 15)}
+                    </p>
+                    {round && (
+                      <p className="text-[10px] text-horror-textMuted mt-1">
+                        参与：{round.options.flatMap(o => o.voters).join('、')}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="min-h-screen bg-horror-bg flex items-center justify-center p-8 relative overflow-hidden">
       <div
@@ -541,20 +904,24 @@ export default function PlayerView() {
               <Play size={14} className="text-purple-400" />
               <span className="text-purple-400 font-medium">课堂回放模式</span>
               <span className="text-horror-textMuted text-xs">
-                {playbackStep + 1} / {playbackPath.steps.length} 步
+                {playbackPhase === 'scene' && `场景 ${playbackStep + 1} / ${playbackPath.steps.length} 步`}
+                {playbackPhase === 'feedback' && `选择反馈 ${playbackStep + 1} / ${playbackPath.steps.length} 步`}
+                {playbackPhase === 'ending' && '结局播放'}
+                {playbackPhase === 'summary' && '路线汇总'}
               </span>
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={playbackPrev} className="horror-btn text-xs px-2 py-1">
+              <button onClick={playbackPrev} className="horror-btn text-xs px-2 py-1" disabled={playbackStep === 0 && playbackPhase === 'scene'}>
                 ◀ 上一步
               </button>
               <button
                 onClick={() => setPlaybackAuto(a => !a)}
                 className={`horror-btn text-xs px-2 py-1 ${playbackAuto ? 'ring-1 ring-horror-accent' : ''}`}
+                disabled={playbackPhase === 'summary'}
               >
                 {playbackAuto ? '⏸ 暂停' : '▶ 自动'}
               </button>
-              <button onClick={playbackNext} className="horror-btn text-xs px-2 py-1">
+              <button onClick={playbackNext} className="horror-btn text-xs px-2 py-1" disabled={playbackPhase === 'summary'}>
                 下一步 ▶
               </button>
               <button
@@ -567,10 +934,11 @@ export default function PlayerView() {
           </div>
         )}
 
-        {(phase === 'scene' || playbackPath) && renderSceneContent()}
-        {phase === 'choice' && !playbackPath && renderSceneContent()}
-        {phase === 'feedback' && renderFeedback()}
-        {phase === 'ending' && renderEnding()}
+        {playbackPath && renderPlaybackScene()}
+        {!playbackPath && phase === 'scene' && renderSceneContent()}
+        {!playbackPath && phase === 'choice' && renderSceneContent()}
+        {!playbackPath && phase === 'feedback' && renderFeedback()}
+        {!playbackPath && phase === 'ending' && renderEnding()}
       </div>
 
       <div className="noise-overlay" />
@@ -580,6 +948,9 @@ export default function PlayerView() {
       )}
       {!playbackPath && (
         <PlaybackPanel onStartPlayback={handleStartPlayback} />
+      )}
+      {!playbackPath && (
+        <ClassroomReportPanel mode="player" />
       )}
 
       {currentPath.length > 1 && !playbackPath && (

@@ -124,6 +124,7 @@ export interface StoryState {
   currentClassroomPath: ClassroomPath | null;
   voteRounds: VoteRound[];
   currentVoteRoundId: string | null;
+  currentVoteRoundChoices: ChoiceCard[];
   activeCardId: string | null;
   mode: Mode;
   votingEnabled: boolean;

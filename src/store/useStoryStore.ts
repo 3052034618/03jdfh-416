@@ -42,6 +42,7 @@ const makeInitialState = (): StoryState => ({
   currentClassroomPath: null,
   voteRounds: [],
   currentVoteRoundId: null,
+  currentVoteRoundChoices: [],
   activeCardId: null,
   mode: 'edit',
   votingEnabled: false,
@@ -325,21 +326,16 @@ export const useStoryStore = create<StoryState & StoryActions>()(
 
       startVoteRound: (sceneId, sceneTitle, choices) => {
         const roundId = generateId();
-        const options: VoteRoundOption[] = choices.map(c => ({
-          choiceId: c.id,
-          choiceText: c.text,
-          voters: [],
-          count: 0,
-        }));
         set({
           currentVoteRoundId: roundId,
+          currentVoteRoundChoices: choices,
           votingEnabled: true,
           votes: {},
         });
       },
 
       closeVoteRound: () => {
-        const { votes, voteRounds, currentVoteRoundId, cards, currentClassroomPath } = get();
+        const { votes, voteRounds, currentVoteRoundId, currentVoteRoundChoices, cards, currentClassroomPath } = get();
         const sceneId = currentClassroomPath
           ? [...currentClassroomPath.steps].reverse().find(s => {
               const card = cards.find(c => c.id === s.cardId);
@@ -358,23 +354,17 @@ export const useStoryStore = create<StoryState & StoryActions>()(
           };
         });
 
-        // 补充零票选项
-        if (sceneCard) {
-          const choiceIds = cards
-            .filter(c => c.type === 'choice')
-            .map(c => c.id);
-          choiceIds.forEach(cid => {
-            if (!options.find(o => o.choiceId === cid)) {
-              const choice = cards.find(c => c.id === cid) as ChoiceCard;
-              options.push({
-                choiceId: cid,
-                choiceText: choice?.text || '未命名',
-                voters: [],
-                count: 0,
-              });
-            }
-          });
-        }
+        // 补充当前场景零票选项（只取启动投票时传入的 choices，避免混入其他场景）
+        currentVoteRoundChoices.forEach(choice => {
+          if (!options.find(o => o.choiceId === choice.id)) {
+            options.push({
+              choiceId: choice.id,
+              choiceText: choice.text || '未命名',
+              voters: [],
+              count: 0,
+            });
+          }
+        });
 
         let winner: { choiceId: string; text: string } | null = null;
         let maxCount = -1;
@@ -409,6 +399,7 @@ export const useStoryStore = create<StoryState & StoryActions>()(
           voteRounds: [...state.voteRounds, round],
           votingEnabled: false,
           currentVoteRoundId: null,
+          currentVoteRoundChoices: [],
           votes: {},
         }));
 
@@ -420,11 +411,11 @@ export const useStoryStore = create<StoryState & StoryActions>()(
       },
 
       resetVotes: () => {
-        set({ votes: {}, votingEnabled: false, currentVoteRoundId: null });
+        set({ votes: {}, votingEnabled: false, currentVoteRoundId: null, currentVoteRoundChoices: [] });
       },
 
       resetVoteRounds: () => {
-        set({ voteRounds: [], votes: {}, votingEnabled: false, currentVoteRoundId: null });
+        set({ voteRounds: [], votes: {}, votingEnabled: false, currentVoteRoundId: null, currentVoteRoundChoices: [] });
       },
 
       triggerCurse: (curseId) => {
