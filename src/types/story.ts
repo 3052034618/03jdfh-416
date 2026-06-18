@@ -77,6 +77,42 @@ export interface VoteRecord {
   voters: string[];
 }
 
+export type ChoiceSource = 'manual' | 'vote';
+
+export interface PathStep {
+  cardId: string;
+  source: ChoiceSource;
+  voteRoundId?: string;
+}
+
+export interface VoteRoundOption {
+  choiceId: string;
+  choiceText: string;
+  voters: string[];
+  count: number;
+}
+
+export interface VoteRound {
+  id: string;
+  sceneId: string;
+  sceneTitle: string;
+  options: VoteRoundOption[];
+  winningChoiceId: string;
+  winningChoiceText: string;
+  totalVotes: number;
+  timestamp: number;
+}
+
+export interface ClassroomPath {
+  id: string;
+  steps: PathStep[];
+  cardTitles: Record<string, string>;
+  endingTitle: string | null;
+  endingId: string | null;
+  startedAt: number;
+  completedAt: number;
+}
+
 export interface StoryState {
   cards: StoryCard[];
   connections: Connection[];
@@ -84,6 +120,10 @@ export interface StoryState {
   votes: Record<string, VoteRecord>;
   exploredPaths: string[][];
   currentPath: string[];
+  classroomPaths: ClassroomPath[];
+  currentClassroomPath: ClassroomPath | null;
+  voteRounds: VoteRound[];
+  currentVoteRoundId: string | null;
   activeCardId: string | null;
   mode: Mode;
   votingEnabled: boolean;

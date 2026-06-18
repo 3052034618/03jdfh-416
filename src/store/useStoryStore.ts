@@ -10,6 +10,11 @@ import type {
   StoryState,
   Mode,
   VoteRecord,
+  VoteRound,
+  VoteRoundOption,
+  ChoiceSource,
+  ClassroomPath,
+  PathStep,
 } from '@/types/story';
 import {
   createEmptyScene,
@@ -20,7 +25,7 @@ import {
 } from '@/types/story';
 import { analyzeNarrativeElements } from '@/utils/analysis';
 
-const initialState: StoryState = {
+const makeInitialState = (): StoryState => ({
   cards: [],
   connections: [],
   narrativeElements: {
@@ -33,12 +38,18 @@ const initialState: StoryState = {
   votes: {},
   exploredPaths: [],
   currentPath: [],
+  classroomPaths: [],
+  currentClassroomPath: null,
+  voteRounds: [],
+  currentVoteRoundId: null,
   activeCardId: null,
   mode: 'edit',
   votingEnabled: false,
   currentSceneIndex: 0,
   activeCurses: [],
-};
+});
+
+const initialState = makeInitialState();
 
 interface StoryActions {
   addCard: (type: 'scene' | 'choice' | 'curse' | 'ending', x: number, y: number) => void;
@@ -51,16 +62,22 @@ interface StoryActions {
   setMode: (mode: Mode) => void;
   updateNarrativeElements: () => void;
   resetDisplay: () => void;
-  addToCurrentPath: (cardId: string) => void;
+  addToCurrentPath: (cardId: string, source?: ChoiceSource, voteRoundId?: string) => void;
   saveCurrentPath: () => void;
-  castVote: (choiceId: string, voterId: string) => void;
+  castVote: (choiceId: string, voterId: string) => boolean;
+  hasVoterInCurrentRound: (voterId: string) => boolean;
+  startVoteRound: (sceneId: string, sceneTitle: string, choices: ChoiceCard[]) => void;
+  closeVoteRound: () => { choiceId: string; text: string } | null;
   setVotingEnabled: (enabled: boolean) => void;
   resetVotes: () => void;
+  resetVoteRounds: () => void;
   triggerCurse: (curseId: string) => void;
   clearActiveCurses: () => void;
   resetAll: () => void;
   loadDemoStory: () => void;
   importStory: (data: Partial<StoryState>) => void;
+  deleteClassroomPath: (id: string) => void;
+  resetClassroomPaths: () => void;
 }
 
 export const useStoryStore = create<StoryState & StoryActions>()(
@@ -175,20 +192,63 @@ export const useStoryStore = create<StoryState & StoryActions>()(
         const entryScene = get().cards.find(
           c => c.type === 'scene' && (c as SceneCard).isEntry
         );
+        const cardTitles: Record<string, string> = {};
+        if (entryScene) {
+          cardTitles[entryScene.id] = (entryScene as SceneCard).title || '入口';
+        }
         set({
           currentPath: entryScene ? [entryScene.id] : [],
           currentSceneIndex: 0,
           activeCurses: [],
+          votes: {},
+          votingEnabled: false,
+          currentVoteRoundId: null,
+          currentClassroomPath: entryScene ? {
+            id: generateId(),
+            steps: [{ cardId: entryScene.id, source: 'manual' } as PathStep],
+            cardTitles,
+            endingTitle: null,
+            endingId: null,
+            startedAt: Date.now(),
+            completedAt: 0,
+          } : null,
         });
       },
 
-      addToCurrentPath: (cardId) => {
-        set(state => ({
-          currentPath: [...state.currentPath, cardId],
-          currentSceneIndex: state.currentSceneIndex + 1,
-        }));
-
+      addToCurrentPath: (cardId, source = 'manual', voteRoundId) => {
         const card = get().cards.find(c => c.id === cardId);
+        const titles: Record<string, string> = {};
+        if (card?.type === 'scene') titles[cardId] = (card as SceneCard).title;
+        else if (card?.type === 'choice') titles[cardId] = (card as ChoiceCard).text;
+        else if (card?.type === 'ending') titles[cardId] = (card as EndingCard).title;
+
+        set(state => {
+          const newCurrent = [...state.currentPath, cardId];
+          const prevPath = state.currentClassroomPath;
+          const newStep: PathStep = { cardId, source };
+          if (voteRoundId) newStep.voteRoundId = voteRoundId;
+
+          let newClassroomPath: ClassroomPath | null = prevPath;
+          if (prevPath) {
+            newClassroomPath = {
+              ...prevPath,
+              steps: [...prevPath.steps, newStep],
+              cardTitles: { ...prevPath.cardTitles, ...titles },
+              ...(card?.type === 'ending' ? {
+                endingId: cardId,
+                endingTitle: (card as EndingCard).title,
+                completedAt: Date.now(),
+              } : {}),
+            };
+          }
+
+          return {
+            currentPath: newCurrent,
+            currentSceneIndex: state.currentSceneIndex + 1,
+            currentClassroomPath: newClassroomPath,
+          };
+        });
+
         if (card?.type === 'choice') {
           const choice = card as ChoiceCard;
           if (choice.delayedConsequence) {
@@ -204,32 +264,46 @@ export const useStoryStore = create<StoryState & StoryActions>()(
       },
 
       saveCurrentPath: () => {
-        const { currentPath, exploredPaths } = get();
+        const { currentPath, exploredPaths, currentClassroomPath, classroomPaths } = get();
         if (currentPath.length > 0) {
           const pathKey = currentPath.join('->');
           const exists = exploredPaths.some(p => p.join('->') === pathKey);
+          const stateUpdates: Partial<StoryState> = {};
           if (!exists) {
-            set(state => ({
-              exploredPaths: [...state.exploredPaths, currentPath],
-            }));
+            stateUpdates.exploredPaths = [...exploredPaths, currentPath];
+          }
+          if (currentClassroomPath && !classroomPaths.some(p => p.id === currentClassroomPath.id)) {
+            const finished: ClassroomPath = currentClassroomPath.completedAt > 0
+              ? currentClassroomPath
+              : { ...currentClassroomPath, completedAt: Date.now() };
+            stateUpdates.classroomPaths = [...classroomPaths, finished];
+          }
+          if (Object.keys(stateUpdates).length > 0) {
+            set(stateUpdates);
           }
         }
       },
 
+      hasVoterInCurrentRound: (voterId) => {
+        const { votes } = get();
+        return Object.values(votes).some(vr => vr.voters.includes(voterId));
+      },
+
       castVote: (choiceId, voterId) => {
+        const trimmed = voterId.trim();
+        if (!trimmed) return false;
+        if (get().hasVoterInCurrentRound(trimmed)) return false;
+
         set(state => {
           const existingVote = state.votes[choiceId];
           if (existingVote) {
-            if (existingVote.voters.includes(voterId)) {
-              return state;
-            }
             return {
               votes: {
                 ...state.votes,
                 [choiceId]: {
                   ...existingVote,
                   count: existingVote.count + 1,
-                  voters: [...existingVote.voters, voterId],
+                  voters: [...existingVote.voters, trimmed],
                 },
               },
             };
@@ -240,12 +314,105 @@ export const useStoryStore = create<StoryState & StoryActions>()(
                 [choiceId]: {
                   choiceId,
                   count: 1,
-                  voters: [voterId],
+                  voters: [trimmed],
                 },
               },
             };
           }
         });
+        return true;
+      },
+
+      startVoteRound: (sceneId, sceneTitle, choices) => {
+        const roundId = generateId();
+        const options: VoteRoundOption[] = choices.map(c => ({
+          choiceId: c.id,
+          choiceText: c.text,
+          voters: [],
+          count: 0,
+        }));
+        set({
+          currentVoteRoundId: roundId,
+          votingEnabled: true,
+          votes: {},
+        });
+      },
+
+      closeVoteRound: () => {
+        const { votes, voteRounds, currentVoteRoundId, cards, currentClassroomPath } = get();
+        const sceneId = currentClassroomPath
+          ? [...currentClassroomPath.steps].reverse().find(s => {
+              const card = cards.find(c => c.id === s.cardId);
+              return card?.type === 'scene';
+            })?.cardId
+          : null;
+        const sceneCard = sceneId ? cards.find(c => c.id === sceneId) as SceneCard : null;
+
+        const options: VoteRoundOption[] = Object.values(votes).map(v => {
+          const choice = cards.find(c => c.id === v.choiceId) as ChoiceCard;
+          return {
+            choiceId: v.choiceId,
+            choiceText: choice?.text || '未命名',
+            voters: v.voters,
+            count: v.count,
+          };
+        });
+
+        // 补充零票选项
+        if (sceneCard) {
+          const choiceIds = cards
+            .filter(c => c.type === 'choice')
+            .map(c => c.id);
+          choiceIds.forEach(cid => {
+            if (!options.find(o => o.choiceId === cid)) {
+              const choice = cards.find(c => c.id === cid) as ChoiceCard;
+              options.push({
+                choiceId: cid,
+                choiceText: choice?.text || '未命名',
+                voters: [],
+                count: 0,
+              });
+            }
+          });
+        }
+
+        let winner: { choiceId: string; text: string } | null = null;
+        let maxCount = -1;
+        options.forEach(o => {
+          if (o.count > maxCount) {
+            maxCount = o.count;
+            winner = { choiceId: o.choiceId, text: o.choiceText };
+          }
+        });
+
+        if (!winner || maxCount === 0) {
+          set({
+            votingEnabled: false,
+            currentVoteRoundId: null,
+            votes: {},
+          });
+          return null;
+        }
+
+        const round: VoteRound = {
+          id: currentVoteRoundId || generateId(),
+          sceneId: sceneId || '',
+          sceneTitle: sceneCard?.title || '场景',
+          options,
+          winningChoiceId: winner.choiceId,
+          winningChoiceText: winner.text,
+          totalVotes: options.reduce((s, o) => s + o.count, 0),
+          timestamp: Date.now(),
+        };
+
+        set(state => ({
+          voteRounds: [...state.voteRounds, round],
+          votingEnabled: false,
+          currentVoteRoundId: null,
+          votes: {},
+        }));
+
+        return winner;
       },
 
       setVotingEnabled: (enabled) => {
@@ -253,11 +420,15 @@ export const useStoryStore = create<StoryState & StoryActions>()(
       },
 
       resetVotes: () => {
-        set({ votes: {} });
+        set({ votes: {}, votingEnabled: false, currentVoteRoundId: null });
+      },
+
+      resetVoteRounds: () => {
+        set({ voteRounds: [], votes: {}, votingEnabled: false, currentVoteRoundId: null });
       },
 
       triggerCurse: (curseId) => {
-        // This is a visual trigger, handled in the UI
+        // visual trigger, handled in UI
       },
 
       clearActiveCurses: () => {
@@ -265,7 +436,17 @@ export const useStoryStore = create<StoryState & StoryActions>()(
       },
 
       resetAll: () => {
-        set(initialState);
+        set(makeInitialState());
+      },
+
+      deleteClassroomPath: (id) => {
+        set(state => ({
+          classroomPaths: state.classroomPaths.filter(p => p.id !== id),
+        }));
+      },
+
+      resetClassroomPaths: () => {
+        set({ classroomPaths: [], voteRounds: [] });
       },
 
       loadDemoStory: () => {
@@ -295,7 +476,6 @@ export const useStoryStore = create<StoryState & StoryActions>()(
               isEntry: true,
               hasRedHerring: true,
               redHerringText: '门口的石阶上有新鲜的泥土脚印，看起来是最近留下的。',
-              nextChoices: [choice1Id, choice2Id],
             } as SceneCard,
             {
               id: scene2Id,
@@ -309,7 +489,6 @@ export const useStoryStore = create<StoryState & StoryActions>()(
               isEntry: false,
               hasRedHerring: false,
               redHerringText: '',
-              nextChoices: [choice3Id, choice4Id],
             } as SceneCard,
             {
               id: scene3Id,
@@ -323,7 +502,6 @@ export const useStoryStore = create<StoryState & StoryActions>()(
               isEntry: false,
               hasRedHerring: false,
               redHerringText: '',
-              nextChoices: [],
             } as SceneCard,
             {
               id: choice1Id,
@@ -337,8 +515,6 @@ export const useStoryStore = create<StoryState & StoryActions>()(
                 curseId: curse1Id,
                 delayScenes: 1,
               },
-              nextSceneId: scene2Id,
-              endingId: null,
             } as ChoiceCard,
             {
               id: choice2Id,
@@ -352,8 +528,6 @@ export const useStoryStore = create<StoryState & StoryActions>()(
                 curseId: curse2Id,
                 delayScenes: 2,
               },
-              nextSceneId: scene3Id,
-              endingId: null,
             } as ChoiceCard,
             {
               id: choice3Id,
@@ -364,8 +538,6 @@ export const useStoryStore = create<StoryState & StoryActions>()(
               immediateFeedback: '"一...二...三..." 什么都没发生。你松了一口气，转身准备离开。',
               cost: 2,
               delayedConsequence: null,
-              nextSceneId: null,
-              endingId: ending1Id,
             } as ChoiceCard,
             {
               id: choice4Id,
@@ -376,8 +548,6 @@ export const useStoryStore = create<StoryState & StoryActions>()(
               immediateFeedback: '你抓起一把椅子，疯狂地砸向镜子。玻璃碎片四溅，每一片碎片中都映着你惊恐的脸。',
               cost: 3,
               delayedConsequence: null,
-              nextSceneId: null,
-              endingId: ending2Id,
             } as ChoiceCard,
             {
               id: curse1Id,
@@ -441,12 +611,20 @@ export const useStoryStore = create<StoryState & StoryActions>()(
       },
 
       importStory: (data) => {
-        set(data);
+        set(data as StoryState);
         get().updateNarrativeElements();
       },
     }),
     {
       name: 'curse-story-storage',
+      partialize: (state) => ({
+        cards: state.cards,
+        connections: state.connections,
+        narrativeElements: state.narrativeElements,
+        exploredPaths: state.exploredPaths,
+        classroomPaths: state.classroomPaths,
+        voteRounds: state.voteRounds,
+      }),
     }
   )
 );

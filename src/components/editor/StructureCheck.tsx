@@ -1,6 +1,16 @@
-import { AlertTriangle, CheckCircle, XCircle, MapPin, GitBranch, BookOpen, Crosshair } from 'lucide-react';
+import { AlertTriangle, CheckCircle, XCircle, MapPin, GitBranch, BookOpen, Crosshair, Route, Zap, AlertOctagon } from 'lucide-react';
 import { useStoryStore } from '@/store/useStoryStore';
 import type { SceneCard, ChoiceCard, EndingCard, StoryCard, CardType } from '@/types/story';
+
+interface CompleteRoute {
+  id: string;
+  sceneNodes: StoryCard[];
+  choiceNodes: ChoiceCard[];
+  endingCard: EndingCard;
+  length: number;
+  scenesWithChoices: { scene: SceneCard; choice: ChoiceCard }[];
+  summary: string;
+}
 
 interface StructureIssue {
   id: string;
@@ -227,6 +237,93 @@ export default function StructureCheck() {
     });
   });
 
+  const findCompleteRoutes = (): CompleteRoute[] => {
+    if (!entryScene) return [];
+    const routes: CompleteRoute[] = [];
+    const visitedPaths = new Set<string>();
+
+    const traverse = (
+      currentId: string,
+      path: StoryCard[],
+      sceneChoicePairs: { scene: SceneCard; choice: ChoiceCard }[],
+      lastChoice: ChoiceCard | null,
+      lastScene: SceneCard | null,
+    ) => {
+      const card = cards.find(c => c.id === currentId);
+      if (!card) return;
+
+      const pathKey = [...path.map(c => c.id), currentId].join('->');
+      if (visitedPaths.has(pathKey)) return;
+      visitedPaths.add(pathKey);
+
+      const newPath = [...path, card];
+
+      if (card.type === 'ending') {
+        const ending = card as EndingCard;
+        const sceneNodes = newPath.filter(c => c.type === 'scene');
+        const choiceNodes = newPath.filter(c => c.type === 'choice') as ChoiceCard[];
+
+        const sceneSteps = sceneNodes.map((s, i) => {
+          const sc = s as SceneCard;
+          const choice = sceneChoicePairs.find(p => p.scene.id === sc.id);
+          return `${i + 1}.${sc.title?.slice(0, 8) || '场景'}`;
+        }).join(' → ');
+
+        const summaryParts: string[] = [];
+        summaryParts.push(`【${ending.endingType === 'good' ? '好结局' : ending.endingType === 'bad' ? '坏结局' : ending.endingType === 'twist' ? '反转结局' : '中性结局'}】${ending.title}`);
+
+        if (sceneChoicePairs.length > 0) {
+          const keyChoices = sceneChoicePairs
+            .map((p, i) => `${i + 1})${p.scene.title?.slice(0, 6) || ''}:「${p.choice.text.slice(0, 10) || ''}」`)
+            .join('→');
+          summaryParts.push(`关键分支: ${keyChoices}`);
+        }
+
+        summaryParts.push(`共 ${sceneNodes.length} 幕 · ${choiceNodes.length} 次选择`);
+
+        routes.push({
+          id: `route-${routes.length}`,
+          sceneNodes,
+          choiceNodes,
+          endingCard: ending,
+          length: sceneNodes.length + choiceNodes.length,
+          scenesWithChoices: sceneChoicePairs,
+          summary: summaryParts.join(' · '),
+        });
+        return;
+      }
+
+      const outgoing = getConnectedFrom(currentId);
+      if (outgoing.length === 0) return;
+
+      if (card.type === 'scene') {
+        const scene = card as SceneCard;
+        outgoing.forEach(nextId => {
+          const next = cards.find(c => c.id === nextId);
+          if (next?.type === 'choice') {
+            traverse(nextId, newPath, sceneChoicePairs, null, scene);
+          }
+        });
+      } else if (card.type === 'choice') {
+        const choice = card as ChoiceCard;
+        const pairs = lastScene ? [...sceneChoicePairs, { scene: lastScene, choice }] : sceneChoicePairs;
+        outgoing.forEach(nextId => {
+          const next = cards.find(c => c.id === nextId);
+          if (next?.type === 'scene') {
+            traverse(nextId, newPath, pairs, choice, null);
+          } else if (next?.type === 'ending') {
+            traverse(nextId, newPath, pairs, choice, null);
+          }
+        });
+      }
+    };
+
+    traverse(entryScene.id, [], [], null, null);
+    return routes;
+  };
+
+  const completeRoutes = findCompleteRoutes();
+
   const handleLocate = (cardId: string) => {
     setActiveCard(cardId);
     const el = document.getElementById(`card-${cardId}`);
@@ -356,6 +453,85 @@ export default function StructureCheck() {
         {renderIssueGroup('错误', errors, XCircle, 'text-horror-bloodLight')}
         {renderIssueGroup('警告', warnings, AlertTriangle, 'text-yellow-400')}
         {renderIssueGroup('建议', infos, CheckCircle, 'text-horror-textMuted')}
+
+        <div>
+          <h4 className="text-sm font-gothic text-horror-text mb-2 flex items-center gap-2">
+            <Route size={14} className="text-horror-accent" />
+            完整路线摘要 ({completeRoutes.length} 条)
+            {completeRoutes.length > 0 && endings.length > 0 && completeRoutes.length < endings.length && (
+              <span className="text-[10px] text-yellow-400 ml-auto flex items-center gap-1">
+                <AlertOctagon size={10} />
+                还有 {endings.length - completeRoutes.length} 个结局未连通
+              </span>
+            )}
+          </h4>
+          {completeRoutes.length === 0 ? (
+            <div className="p-3 rounded-lg bg-horror-bg border border-horror-border">
+              <p className="text-xs text-horror-textMuted text-center">
+                暂无可到达结局的完整路线
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {completeRoutes.map((route, idx) => (
+                <div key={route.id} className="rounded-lg bg-horror-bg border border-horror-border overflow-hidden">
+                  <div className="p-2.5 border-b border-horror-border/50 flex items-start gap-2">
+                    <div className={`w-6 h-6 rounded shrink-0 flex items-center justify-center text-xs font-bold
+                      ${route.endingCard.endingType === 'good' ? 'bg-green-500/20 text-green-400' :
+                        route.endingCard.endingType === 'bad' ? 'bg-horror-blood/30 text-horror-bloodLight' :
+                        route.endingCard.endingType === 'twist' ? 'bg-purple-500/20 text-purple-400' :
+                        'bg-yellow-500/20 text-yellow-400'}`}>
+                      {idx + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs text-horror-text font-medium leading-snug">
+                        {route.summary}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="p-2 space-y-1">
+                    <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                      {route.scenesWithChoices.map((pair, pi) => (
+                        <div key={pi} className="flex items-center gap-1">
+                          <button
+                            onClick={() => handleLocate(pair.scene.id)}
+                            className="px-1.5 py-0.5 rounded bg-horror-surface border border-horror-border text-horror-textMuted hover:text-horror-accent hover:border-horror-accent/50 transition-colors"
+                            title={pair.scene.title}
+                          >
+                            {pair.scene.title?.slice(0, 5) || '场景'}
+                          </button>
+                          <span className="text-horror-textMuted/50">→</span>
+                          <button
+                            onClick={() => handleLocate(pair.choice.id)}
+                            className="px-1.5 py-0.5 rounded bg-horror-surface border border-horror-border text-horror-text hover:text-horror-bloodLight hover:border-horror-blood/50 transition-colors"
+                            title={pair.choice.text}
+                          >
+                            {pair.choice.text.slice(0, 6) || '选择'}
+                          </button>
+                          {pi < route.scenesWithChoices.length - 1 && (
+                            <span className="text-horror-textMuted/50 mx-0.5">·</span>
+                          )}
+                        </div>
+                      ))}
+                      {route.endingCard && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-horror-textMuted/50">→</span>
+                          <button
+                            onClick={() => handleLocate(route.endingCard.id)}
+                            className="px-1.5 py-0.5 rounded bg-purple-500/10 border border-purple-500/30 text-purple-300 hover:border-purple-400/50 transition-colors"
+                            title={route.endingCard.title}
+                          >
+                            {route.endingCard.title?.slice(0, 6) || '结局'}
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
         {issues.length === 0 && scenes.length > 0 && (
           <div className="text-center py-4">
