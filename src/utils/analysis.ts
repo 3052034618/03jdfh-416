@@ -9,6 +9,8 @@ import type {
   CurseClarityResult,
   PacingResult,
   AnalysisResult,
+  RouteFearSummary,
+  CurseSeverity,
 } from '@/types/story';
 
 export function calculateBranchCoverage(
@@ -386,6 +388,151 @@ export function analyzeNarrativeElements(
   };
 }
 
+export function analyzeRouteFearSummaries(
+  cards: StoryCard[],
+  connections: Connection[]
+): RouteFearSummary[] {
+  const scenes = cards.filter(c => c.type === 'scene') as SceneCard[];
+  const choices = cards.filter(c => c.type === 'choice') as ChoiceCard[];
+  const curses = cards.filter(c => c.type === 'curse') as CurseCard[];
+  const endings = cards.filter(c => c.type === 'ending') as EndingCard[];
+
+  const entryScene = scenes.find(s => s.isEntry);
+  if (!entryScene) return [];
+
+  const getNextIds = (cardId: string) => connections.filter(c => c.from === cardId).map(c => c.to);
+
+  const allRoutes: {
+    choices: ChoiceCard[];
+    ending: EndingCard | null;
+  }[] = [];
+
+  const traverse = (
+    currentId: string,
+    visited: Set<string>,
+    routeChoices: ChoiceCard[]
+  ) => {
+    if (visited.has(currentId)) return;
+    visited.add(currentId);
+
+    const card = cards.find(c => c.id === currentId);
+    if (!card) return;
+
+    if (card.type === 'choice') {
+      const choice = card as ChoiceCard;
+      const newChoices = [...routeChoices, choice];
+      const nextIds = getNextIds(choice.id);
+
+      if (nextIds.length === 0) {
+        allRoutes.push({ choices: newChoices, ending: null });
+        return;
+      }
+
+      nextIds.forEach(nextId => {
+        traverse(nextId, new Set(visited), newChoices);
+      });
+      return;
+    }
+
+    if (card.type === 'ending') {
+      allRoutes.push({ choices: routeChoices, ending: card as EndingCard });
+      return;
+    }
+
+    const nextIds = getNextIds(currentId);
+    if (nextIds.length === 0 && card.type === 'scene') {
+      if (routeChoices.length > 0) {
+        allRoutes.push({ choices: routeChoices, ending: null });
+      }
+      return;
+    }
+
+    nextIds.forEach(nextId => {
+      traverse(nextId, new Set(visited), routeChoices);
+    });
+  };
+
+  const firstChoices = getNextIds(entryScene.id);
+  firstChoices.forEach(choiceId => {
+    traverse(choiceId, new Set([entryScene.id]), []);
+  });
+
+  return allRoutes.map((route, index) => {
+    const totalCost = route.choices.reduce((sum, c) => sum + c.cost, 0);
+
+    const triggeredCurses: { name: string; severity: CurseSeverity; rule: string }[] = [];
+    route.choices.forEach(choice => {
+      if (choice.delayedConsequence) {
+        const curse = curses.find(c => c.id === choice.delayedConsequence!.curseId);
+        if (curse) {
+          triggeredCurses.push({
+            name: curse.name,
+            severity: curse.severity,
+            rule: curse.rule,
+          });
+        }
+      }
+    });
+
+    const hasCallback = !!(route.ending && route.ending.callback?.trim());
+    const callbackText = route.ending?.callback || '';
+
+    let fearMeaningScore = 0;
+    const notes: string[] = [];
+
+    if (totalCost > 0) {
+      fearMeaningScore += Math.min(30, totalCost * 10);
+    } else {
+      notes.push('此路线无选择代价');
+    }
+
+    if (triggeredCurses.length > 0) {
+      fearMeaningScore += triggeredCurses.length * 15;
+      const hasSevere = triggeredCurses.some(c => c.severity === 'severe');
+      if (hasSevere) fearMeaningScore += 10;
+    } else {
+      notes.push('此路线未触发任何诅咒');
+    }
+
+    if (hasCallback) {
+      fearMeaningScore += 20;
+    } else {
+      notes.push('结局缺少回扣');
+    }
+
+    if (route.ending?.endingType === 'bad' || route.ending?.endingType === 'twist') {
+      fearMeaningScore += 10;
+    }
+
+    const choiceTexts = route.choices.map(c => c.text || '未命名选择');
+    const pathLabel = choiceTexts.length > 0
+      ? choiceTexts.map(t => t.length > 10 ? t.slice(0, 10) + '…' : t).join(' → ')
+      : `路线 ${index + 1}`;
+
+    let fearNote = '';
+    if (fearMeaningScore >= 70) {
+      fearNote = '恐惧意义丰富：代价、诅咒与结局回扣形成完整的恐惧体验';
+    } else if (fearMeaningScore >= 40) {
+      fearNote = '有一定恐惧意义，但' + (notes.length > 0 ? notes[0] : '仍可加强');
+    } else {
+      fearNote = '恐惧意义不足：' + (notes.length > 0 ? notes.join('，') : '需要增加恐怖元素');
+    }
+
+    return {
+      pathLabel,
+      choiceTexts,
+      totalCost,
+      triggeredCurses,
+      endingTitle: route.ending?.title || null,
+      endingType: route.ending?.endingType || null,
+      hasCallback,
+      callbackText,
+      fearMeaningScore: Math.min(100, fearMeaningScore),
+      fearMeaningNote: fearNote,
+    };
+  });
+}
+
 export function runFullAnalysis(
   cards: StoryCard[],
   connections: Connection[],
@@ -398,6 +545,7 @@ export function runFullAnalysis(
   const branchCoverage = calculateBranchCoverage(cards, connections, exploredPaths);
   const curseClarity = analyzeCurseClarity(curses, choices, scenes);
   const pacing = analyzePacing(scenes, choices, curses, connections);
+  const routeFearSummaries = analyzeRouteFearSummaries(cards, connections);
 
   const overallFeedback: string[] = [];
 
@@ -429,10 +577,16 @@ export function runFullAnalysis(
     overallFeedback.push('🏆 四大叙事要素齐全！这是一个结构完整的恐怖叙事');
   }
 
+  const lowFearRoutes = routeFearSummaries.filter(r => r.fearMeaningScore < 40);
+  if (lowFearRoutes.length > 0) {
+    overallFeedback.push(`⚠️ ${lowFearRoutes.length} 条路线的恐惧意义不足，建议增加代价、诅咒或结局回扣`);
+  }
+
   return {
     branchCoverage,
     curseClarity,
     pacing,
+    routeFearSummaries,
     overallFeedback,
   };
 }

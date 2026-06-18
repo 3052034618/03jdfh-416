@@ -26,11 +26,11 @@ const cardBgColors: Record<CardType, string> = {
 
 interface DraggableCardProps {
   card: StoryCard;
-  onConnectStart?: (cardId: string) => void;
+  onConnectClick?: (cardId: string) => void;
   connectingFrom?: string | null;
 }
 
-export default function DraggableCard({ card, onConnectStart, connectingFrom }: DraggableCardProps) {
+export default function DraggableCard({ card, onConnectClick, connectingFrom }: DraggableCardProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const cardRef = useRef<HTMLDivElement>(null);
@@ -115,6 +115,7 @@ export default function DraggableCard({ card, onConnectStart, connectingFrom }: 
 
   return (
     <div
+      id={`card-${card.id}`}
       ref={cardRef}
       className={`absolute w-48 cursor-move select-none transition-all duration-150
         ${isDragging ? 'dragging z-50' : 'z-10'}
@@ -146,16 +147,20 @@ export default function DraggableCard({ card, onConnectStart, connectingFrom }: 
           </span>
         </div>
         <div className="card-actions flex items-center gap-1">
-          {onConnectStart && (
+          {onConnectClick && (
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onConnectStart(card.id);
+                onConnectClick(card.id);
               }}
-              className="p-1 hover:bg-horror-blood/30 rounded transition-colors"
-              title="连接到其他卡片"
+              className={`p-1 rounded transition-colors ${
+                connectingFrom === card.id
+                  ? 'bg-horror-accent/30 text-horror-accent'
+                  : 'hover:bg-horror-blood/30'
+              }`}
+              title={connectingFrom === card.id ? '取消连接' : '连接到其他卡片'}
             >
-              <Link size={14} className="text-horror-textMuted hover:text-horror-accent" />
+              <Link size={14} className={connectingFrom === card.id ? 'text-horror-accent' : 'text-horror-textMuted hover:text-horror-accent'} />
             </button>
           )}
           <button

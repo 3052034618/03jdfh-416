@@ -1,7 +1,48 @@
 import { useState } from 'react';
-import { MousePointer2, Skull, Clock } from 'lucide-react';
+import { MousePointer2, Skull, Clock, Link2, XCircle } from 'lucide-react';
 import { useStoryStore } from '@/store/useStoryStore';
 import type { ChoiceCard } from '@/types/story';
+
+function ConnectionStatus({ cardId }: { cardId: string }) {
+  const { connections, cards, removeConnection } = useStoryStore();
+  const outgoing = connections.filter(c => c.from === cardId);
+
+  if (outgoing.length === 0) {
+    return (
+      <div className="p-2 bg-horror-bg rounded-lg border border-horror-border text-center">
+        <p className="text-xs text-horror-bloodLight">未连接到任何目标</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {outgoing.map(conn => {
+        const target = cards.find(c => c.id === conn.to);
+        if (!target) return null;
+        const typeLabel = target.type === 'scene' ? '场景' : target.type === 'ending' ? '结局' : target.type;
+        const title = target.type === 'scene' ? (target as { title: string }).title :
+                      target.type === 'ending' ? (target as { title: string }).title :
+                      target.type === 'choice' ? (target as { text: string }).text :
+                      (target as { name: string }).name;
+        return (
+          <div key={conn.to} className="flex items-center gap-2 p-2 bg-horror-bg rounded-lg border border-horror-border">
+            <Link2 size={12} className="text-horror-accent" />
+            <span className="text-xs text-horror-textMuted">{typeLabel}：</span>
+            <span className="text-xs text-horror-text flex-1 truncate">{title || '未命名'}</span>
+            <button
+              onClick={() => removeConnection(cardId, conn.to)}
+              className="p-0.5 hover:bg-horror-blood/20 rounded transition-colors"
+              title="断开连接"
+            >
+              <XCircle size={12} className="text-horror-textMuted hover:text-horror-bloodLight" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 interface ChoiceEditorProps {
   card: ChoiceCard;
@@ -171,42 +212,10 @@ export default function ChoiceEditor({ card }: ChoiceEditorProps) {
       </div>
 
       <div className="pt-2 border-t border-horror-border">
-        <label className="block text-sm text-horror-textMuted mb-2">连接到...</label>
-        
-        <div className="mb-3">
-          <label className="block text-xs text-horror-textMuted mb-1">下一个场景</label>
-          <select
-            className="horror-input"
-            value={card.nextSceneId || ''}
-            onChange={(e) => handleChange('nextSceneId', e.target.value || null)}
-          >
-            <option value="">（不连接到场景）</option>
-            {sceneOptions.map(scene => (
-              <option key={scene.id} value={scene.id}>
-                {scene.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        <div>
-          <label className="block text-xs text-horror-textMuted mb-1">或直接连接到结局</label>
-          <select
-            className="horror-input"
-            value={card.endingId || ''}
-            onChange={(e) => handleChange('endingId', e.target.value || null)}
-          >
-            <option value="">（不连接到结局）</option>
-            {endingOptions.map(ending => (
-              <option key={ending.id} value={ending.id}>
-                {ending.name}
-              </option>
-            ))}
-          </select>
-        </div>
-
+        <label className="block text-sm text-horror-text font-semibold mb-2">连线目标</label>
+        <ConnectionStatus cardId={card.id} />
         <p className="text-xs text-horror-textMuted mt-2">
-          提示：你也可以在画布上使用连接功能来建立关联
+          💡 在画布上点击此卡片的 🔗 按钮，再点击目标卡片即可建立连接
         </p>
       </div>
     </div>

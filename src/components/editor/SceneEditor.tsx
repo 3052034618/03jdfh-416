@@ -1,6 +1,47 @@
-import { MapPin } from 'lucide-react';
+import { MapPin, Link2, XCircle } from 'lucide-react';
 import { useStoryStore } from '@/store/useStoryStore';
 import type { SceneCard } from '@/types/story';
+
+function SceneConnectionStatus({ cardId }: { cardId: string }) {
+  const { connections, cards, removeConnection } = useStoryStore();
+  const outgoing = connections.filter(c => c.from === cardId);
+
+  if (outgoing.length === 0) {
+    return (
+      <div className="p-2 bg-horror-bg rounded-lg border border-horror-border text-center">
+        <p className="text-xs text-horror-bloodLight">未连接到任何选择卡片</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {outgoing.map((conn, index) => {
+        const target = cards.find(c => c.id === conn.to);
+        if (!target) return null;
+        const typeLabel = target.type === 'choice' ? '选择' : target.type === 'scene' ? '场景' : target.type;
+        const title = target.type === 'choice' ? (target as { text: string }).text :
+                      target.type === 'scene' ? (target as { title: string }).title :
+                      target.type === 'ending' ? (target as { title: string }).title :
+                      (target as { name: string }).name;
+        return (
+          <div key={conn.to} className="flex items-center gap-2 p-2 bg-horror-bg rounded-lg border border-horror-border">
+            <Link2 size={12} className="text-horror-accent" />
+            <span className="text-xs text-horror-textMuted">{typeLabel} {index + 1}：</span>
+            <span className="text-xs text-horror-text flex-1 truncate">{title || '未命名'}</span>
+            <button
+              onClick={() => removeConnection(cardId, conn.to)}
+              className="p-0.5 hover:bg-horror-blood/20 rounded transition-colors"
+              title="断开连接"
+            >
+              <XCircle size={12} className="text-horror-textMuted hover:text-horror-bloodLight" />
+            </button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 interface SceneEditorProps {
   card: SceneCard;
@@ -107,23 +148,11 @@ export default function SceneEditor({ card }: SceneEditorProps) {
       </div>
 
       <div className="pt-2 border-t border-horror-border">
-        <label className="block text-sm text-horror-textMuted mb-2">关联的选择</label>
-        {card.nextChoices.length === 0 ? (
-          <p className="text-sm text-horror-textMuted italic">
-            还没有关联任何选择。请在画布上使用连接功能将此场景连接到选择卡片。
-          </p>
-        ) : (
-          <div className="space-y-1">
-            {card.nextChoices.map((choiceId, index) => {
-              const choice = useStoryStore.getState().cards.find(c => c.id === choiceId);
-              return (
-                <div key={choiceId} className="text-sm text-horror-text bg-horror-bg px-3 py-2 rounded">
-                  选择 {index + 1}: {choice?.type === 'choice' ? choice.text : '未找到'}
-                </div>
-              );
-            })}
-          </div>
-        )}
+        <label className="block text-sm text-horror-text font-semibold mb-2">连线目标</label>
+        <SceneConnectionStatus cardId={card.id} />
+        <p className="text-xs text-horror-textMuted mt-2">
+          💡 在画布上点击此卡片的 🔗 按钮，再点击选择卡片即可建立连接
+        </p>
       </div>
     </div>
   );

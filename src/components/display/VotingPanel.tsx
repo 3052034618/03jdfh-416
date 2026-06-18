@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Vote, Users, RotateCcw } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Vote, Users, RotateCcw, Clock } from 'lucide-react';
 import { useStoryStore } from '@/store/useStoryStore';
 import type { ChoiceCard } from '@/types/story';
 
@@ -12,10 +12,21 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
   const { votes, castVote, resetVotes, votingEnabled, setVotingEnabled } = useStoryStore();
   const [voterId, setVoterId] = useState('');
   const [hasVoted, setHasVoted] = useState(false);
+  const [countdown, setCountdown] = useState<number | null>(null);
 
   const totalVotes = choices.reduce((sum, choice) => {
     return sum + (votes[choice.id]?.count || 0);
   }, 0);
+
+  useEffect(() => {
+    if (countdown === null) return;
+    if (countdown === 0) {
+      handleCloseVoting();
+      return;
+    }
+    const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [countdown]);
 
   const handleVote = (choiceId: string) => {
     if (!voterId.trim()) {
@@ -26,7 +37,6 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
       alert('你已经投过票了');
       return;
     }
-    
     castVote(choiceId, voterId.trim());
     setHasVoted(true);
   };
@@ -44,6 +54,28 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
     return winner;
   };
 
+  const handleStartCountdown = (seconds: number) => {
+    setCountdown(seconds);
+  };
+
+  const handleCloseVoting = () => {
+    setVotingEnabled(false);
+    setCountdown(null);
+    if (totalVotes > 0) {
+      const winner = getWinningChoice();
+      setTimeout(() => {
+        onVoteComplete?.(winner);
+      }, 1500);
+    }
+  };
+
+  const handleCancelVoting = () => {
+    setVotingEnabled(false);
+    resetVotes();
+    setHasVoted(false);
+    setCountdown(null);
+  };
+
   return (
     <div className="bg-horror-surface/95 backdrop-blur-sm rounded-xl border border-horror-border p-6 shadow-haunt animate-slide-up">
       <div className="flex items-center justify-between mb-4">
@@ -56,32 +88,26 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
             <Users size={14} />
             {totalVotes} 人已投票
           </span>
-          <button
-            onClick={() => {
-              setVotingEnabled(!votingEnabled);
-              if (!votingEnabled) {
-                resetVotes();
-                setHasVoted(false);
-              }
-            }}
-            className="horror-btn text-xs"
-          >
-            {votingEnabled ? '结束投票' : '开始投票'}
-          </button>
-          <button
-            onClick={() => {
-              resetVotes();
-              setHasVoted(false);
-            }}
-            className="p-2 hover:bg-horror-blood/20 rounded transition-colors"
-            title="重置投票"
-          >
-            <RotateCcw size={16} className="text-horror-textMuted" />
-          </button>
         </div>
       </div>
 
-      {votingEnabled && !hasVoted && (
+      {countdown !== null && (
+        <div className="mb-4 p-3 bg-horror-blood/10 rounded-lg border border-horror-blood/30 text-center">
+          <div className="flex items-center justify-center gap-2">
+            <Clock size={18} className="text-horror-bloodLight animate-pulse" />
+            <span className="font-gothic text-2xl text-horror-bloodLight">{countdown}</span>
+            <span className="text-sm text-horror-textMuted">秒后自动结束</span>
+          </div>
+          <div className="h-1 bg-horror-bg rounded-full mt-2 overflow-hidden">
+            <div
+              className="h-full bg-horror-bloodLight transition-all duration-1000"
+              style={{ width: `${((30 - countdown) / 30) * 100}%` }}
+            />
+          </div>
+        </div>
+      )}
+
+      {votingEnabled && !hasVoted && countdown === null && (
         <div className="mb-4">
           <input
             type="text"
@@ -97,15 +123,16 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
         {choices.map((choice, index) => {
           const voteCount = votes[choice.id]?.count || 0;
           const percentage = totalVotes > 0 ? (voteCount / totalVotes) * 100 : 0;
-          const isWinning = voteCount > 0 && voteCount === Math.max(...choices.map(c => votes[c.id]?.count || 0));
+          const maxCount = Math.max(...choices.map(c => votes[c.id]?.count || 0), 0);
+          const isWinning = voteCount > 0 && voteCount === maxCount;
 
           return (
             <div key={choice.id} className="relative">
               <button
-                onClick={() => votingEnabled && handleVote(choice.id)}
-                disabled={!votingEnabled || hasVoted}
+                onClick={() => votingEnabled && !hasVoted && countdown !== null && handleVote(choice.id)}
+                disabled={!votingEnabled || (hasVoted && countdown === null)}
                 className={`w-full text-left p-4 rounded-lg border transition-all duration-300 relative overflow-hidden
-                  ${isWinning ? 'border-horror-bloodLight bg-horror-blood/10' : 'border-horror-border bg-horror-bg'}
+                  ${isWinning && !votingEnabled ? 'border-horror-bloodLight bg-horror-blood/10' : 'border-horror-border bg-horror-bg'}
                   ${votingEnabled && !hasVoted ? 'hover:border-horror-blood cursor-pointer' : 'cursor-default'}
                   ${hasVoted && votes[choice.id]?.voters.includes(voterId.trim()) ? 'ring-2 ring-horror-accent' : ''}`}
               >
@@ -123,7 +150,7 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
                     <span className="text-horror-text">{choice.text}</span>
                   </div>
                   <div className="flex items-center gap-2 ml-4">
-                    <span className={`font-gothic text-xl ${isWinning ? 'text-horror-bloodLight' : 'text-horror-textMuted'}`}>
+                    <span className={`font-gothic text-xl ${isWinning && !votingEnabled ? 'text-horror-bloodLight' : 'text-horror-textMuted'}`}>
                       {voteCount}
                     </span>
                     {totalVotes > 0 && (
@@ -139,25 +166,41 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
         })}
       </div>
 
+      {votingEnabled && countdown === null && (
+        <div className="mt-4 pt-4 border-t border-horror-border space-y-3">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-sm text-horror-textMuted">投票计时：</span>
+            <button onClick={() => handleStartCountdown(15)} className="horror-btn text-xs px-3 py-1">15秒</button>
+            <button onClick={() => handleStartCountdown(30)} className="horror-btn text-xs px-3 py-1">30秒</button>
+            <button onClick={() => handleStartCountdown(60)} className="horror-btn text-xs px-3 py-1">60秒</button>
+          </div>
+          <div className="flex items-center justify-between">
+            <button onClick={handleCancelVoting} className="horror-btn text-sm">
+              取消投票
+            </button>
+            <button onClick={handleCloseVoting} className="horror-btn-primary text-sm">
+              立即结束
+            </button>
+          </div>
+        </div>
+      )}
+
       {!votingEnabled && totalVotes > 0 && (
         <div className="mt-4 pt-4 border-t border-horror-border">
           <div className="flex items-center justify-between">
             <p className="text-sm text-horror-textMuted">
               投票结果：<span className="text-horror-bloodLight font-semibold">{getWinningChoice().text}</span> 胜出
             </p>
-            <button
-              onClick={() => onVoteComplete?.(getWinningChoice())}
-              className="horror-btn-primary text-sm"
-            >
-              继续剧情
-            </button>
           </div>
+          <p className="text-xs text-horror-accent mt-2 text-center animate-pulse">
+            即将按此选择继续剧情...
+          </p>
         </div>
       )}
 
-      {hasVoted && votingEnabled && (
+      {hasVoted && votingEnabled && countdown !== null && (
         <p className="text-center text-sm text-horror-accent mt-4">
-          ✓ 你已投票，请等待其他同学完成投票
+          ✓ 你已投票，请等待倒计时结束
         </p>
       )}
     </div>

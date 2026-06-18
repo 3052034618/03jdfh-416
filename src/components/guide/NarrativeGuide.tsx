@@ -109,7 +109,7 @@ export default function NarrativeGuide() {
   };
 
   return (
-    <div className="w-72 bg-horror-surface border-l border-horror-border p-4 flex flex-col gap-4 overflow-y-auto">
+    <div className="flex flex-col gap-4">
       <div className="text-center mb-2">
         <h2 className="font-gothic text-xl text-horror-text text-shadow-blood flex items-center justify-center gap-2">
           <Skull size={20} className="text-horror-bloodLight" />

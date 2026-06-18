@@ -50,7 +50,7 @@ export default function PropertyPanel() {
   };
 
   return (
-    <div className="w-80 bg-horror-surface border-l border-horror-border p-4 overflow-y-auto">
+    <div className="h-full p-4 overflow-y-auto">
       {renderEditor()}
     </div>
   );

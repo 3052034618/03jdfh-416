@@ -7,6 +7,7 @@ import ModeToggle from '@/components/common/ModeToggle';
 import BranchCoverage from '@/components/analysis/BranchCoverage';
 import CurseClarity from '@/components/analysis/CurseClarity';
 import PacingAnalysis from '@/components/analysis/PacingAnalysis';
+import RouteFearSummaryList from '@/components/analysis/RouteFearSummary';
 import Typewriter from '@/components/display/Typewriter';
 import type { AnalysisResult } from '@/types/story';
 
@@ -115,6 +116,10 @@ export default function AnalysisPage() {
 
         <div className="mb-8">
           <PacingAnalysis data={analysis.pacing} />
+        </div>
+
+        <div className="mb-8">
+          <RouteFearSummaryList data={analysis.routeFearSummaries} />
         </div>
 
         {showFeedback && analysis.overallFeedback.length > 0 && (

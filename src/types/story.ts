@@ -111,10 +111,24 @@ export interface PacingResult {
   suggestions: string[];
 }
 
+export interface RouteFearSummary {
+  pathLabel: string;
+  choiceTexts: string[];
+  totalCost: number;
+  triggeredCurses: { name: string; severity: CurseSeverity; rule: string }[];
+  endingTitle: string | null;
+  endingType: EndingType | null;
+  hasCallback: boolean;
+  callbackText: string;
+  fearMeaningScore: number;
+  fearMeaningNote: string;
+}
+
 export interface AnalysisResult {
   branchCoverage: BranchCoverageResult;
   curseClarity: CurseClarityResult;
   pacing: PacingResult;
+  routeFearSummaries: RouteFearSummary[];
   overallFeedback: string[];
 }
 

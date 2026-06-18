@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { RotateCcw, SkipForward, Skull } from 'lucide-react';
+import { RotateCcw, SkipForward, Skull, Eye, Vote, Users } from 'lucide-react';
 import { useStoryStore } from '@/store/useStoryStore';
 import Typewriter from './Typewriter';
 import VotingPanel from './VotingPanel';
@@ -8,6 +8,7 @@ import type { SceneCard, ChoiceCard, CurseCard, EndingCard } from '@/types/story
 export default function PlayerView() {
   const {
     cards,
+    connections,
     currentPath,
     currentSceneIndex,
     activeCurses,
@@ -15,6 +16,7 @@ export default function PlayerView() {
     saveCurrentPath,
     resetDisplay,
     clearActiveCurses,
+    setVotingEnabled,
   } = useStoryStore();
 
   const [phase, setPhase] = useState<'scene' | 'feedback' | 'choice' | 'voting' | 'ending'>('scene');
@@ -22,7 +24,11 @@ export default function PlayerView() {
   const [currentFeedback, setCurrentFeedback] = useState('');
   const [showCurseEffect, setShowCurseEffect] = useState(false);
   const [triggeredCurse, setTriggeredCurse] = useState<CurseCard | null>(null);
-  const [showVoting, setShowVoting] = useState(false);
+  const [isPreviewing, setIsPreviewing] = useState(true);
+
+  const getConnectedIds = useCallback((cardId: string) => {
+    return connections.filter(c => c.from === cardId).map(c => c.to);
+  }, [connections]);
 
   const getCurrentCard = useCallback(() => {
     if (currentPath.length === 0) return null;
@@ -35,10 +41,7 @@ export default function PlayerView() {
   const currentEnding = currentCard?.type === 'ending' ? (currentCard as EndingCard) : null;
 
   useEffect(() => {
-    const triggered = activeCurses.filter(
-      ac => ac.triggerScene === currentSceneIndex
-    );
-    
+    const triggered = activeCurses.filter(ac => ac.triggerScene === currentSceneIndex);
     if (triggered.length > 0) {
       const curseCard = cards.find(c => c.id === triggered[0].curseId) as CurseCard;
       if (curseCard) {
@@ -57,34 +60,44 @@ export default function PlayerView() {
   }, [currentCard, saveCurrentPath]);
 
   const handleSceneComplete = () => {
-    if (currentScene && currentScene.nextChoices.length > 0) {
-      setShowChoices(true);
-      setPhase('choice');
-    }
+    setShowChoices(true);
+    setPhase('choice');
   };
 
-  const getChoices = (): ChoiceCard[] => {
+  const getChoices = useCallback((): ChoiceCard[] => {
     if (!currentScene) return [];
-    return currentScene.nextChoices
+    const choiceIds = getConnectedIds(currentScene.id);
+    return choiceIds
       .map(id => cards.find(c => c.id === id) as ChoiceCard)
-      .filter(Boolean);
-  };
+      .filter(c => c && c.type === 'choice');
+  }, [currentScene, getConnectedIds, cards]);
+
+  const getNextCardAfterChoice = useCallback((choiceId: string): { sceneId: string | null; endingId: string | null } => {
+    const nextIds = getConnectedIds(choiceId);
+    for (const nid of nextIds) {
+      const card = cards.find(c => c.id === nid);
+      if (card?.type === 'scene') return { sceneId: nid, endingId: null };
+      if (card?.type === 'ending') return { sceneId: null, endingId: nid };
+    }
+    return { sceneId: null, endingId: null };
+  }, [getConnectedIds, cards]);
 
   const handleChoiceSelect = (choice: ChoiceCard) => {
     setCurrentFeedback(choice.immediateFeedback);
     setPhase('feedback');
     addToCurrentPath(choice.id);
     setShowChoices(false);
+    setIsPreviewing(true);
   };
 
   const handleFeedbackComplete = () => {
     const lastCardId = currentPath[currentPath.length - 1];
-    const lastCard = cards.find(c => c.id === lastCardId) as ChoiceCard;
-    
-    if (lastCard?.endingId) {
-      addToCurrentPath(lastCard.endingId);
-    } else if (lastCard?.nextSceneId) {
-      addToCurrentPath(lastCard.nextSceneId);
+    const { sceneId, endingId } = getNextCardAfterChoice(lastCardId);
+
+    if (endingId) {
+      addToCurrentPath(endingId);
+    } else if (sceneId) {
+      addToCurrentPath(sceneId);
       setPhase('scene');
       setCurrentFeedback('');
     } else {
@@ -94,8 +107,14 @@ export default function PlayerView() {
   };
 
   const handleVoteComplete = (winningChoice: ChoiceCard) => {
-    setShowVoting(false);
+    setPhase('choice');
     handleChoiceSelect(winningChoice);
+  };
+
+  const handleStartVoting = () => {
+    setIsPreviewing(false);
+    setPhase('voting');
+    setVotingEnabled(true);
   };
 
   const handleRestart = () => {
@@ -104,12 +123,13 @@ export default function PlayerView() {
     setPhase('scene');
     setShowChoices(false);
     setCurrentFeedback('');
-    setShowVoting(false);
     setTriggeredCurse(null);
+    setIsPreviewing(true);
   };
 
   const renderSceneContent = () => {
     if (!currentScene) return null;
+    const choices = getChoices();
 
     return (
       <div className="animate-fade-in">
@@ -130,14 +150,9 @@ export default function PlayerView() {
             speed={40}
             className="text-horror-text"
             onComplete={() => {
-              if (currentScene.environmentDetails) {
-                // Auto continue after short delay
-              } else {
-                handleSceneComplete();
-              }
+              if (!currentScene.environmentDetails) handleSceneComplete();
             }}
           />
-          
           {currentScene.environmentDetails && (
             <Typewriter
               text={currentScene.environmentDetails}
@@ -147,7 +162,6 @@ export default function PlayerView() {
               onComplete={handleSceneComplete}
             />
           )}
-
           {currentScene.hasRedHerring && currentScene.redHerringText && (
             <Typewriter
               text={currentScene.redHerringText}
@@ -158,29 +172,31 @@ export default function PlayerView() {
           )}
         </div>
 
-        {showChoices && currentScene.nextChoices.length > 0 && (
+        {showChoices && choices.length > 0 && (
           <div className="mt-8 space-y-3 animate-slide-up">
             <h3 className="font-gothic text-xl text-horror-bloodLight mb-4 flex items-center gap-2">
               <Skull size={20} />
               你的选择
             </h3>
-            
+
             <div className="flex gap-3 mb-4">
               <button
-                onClick={() => setShowVoting(true)}
+                onClick={handleStartVoting}
                 className="horror-btn flex-1 text-sm flex items-center justify-center gap-2"
               >
-                🗳️ 开启投票
-              </button>
-              <button
-                onClick={handleSceneComplete}
-                className="horror-btn flex-1 text-sm flex items-center justify-center gap-2"
-              >
-                ⏭️ 跳过投票
+                <Vote size={16} />
+                开启投票
               </button>
             </div>
 
-            {getChoices().map((choice, index) => (
+            {isPreviewing && (
+              <p className="text-xs text-horror-textMuted mb-3 flex items-center gap-1">
+                <Eye size={14} />
+                老师预览模式 — 开启投票后同学参与选择
+              </p>
+            )}
+
+            {choices.map((choice, index) => (
               <button
                 key={choice.id}
                 onClick={() => handleChoiceSelect(choice)}
@@ -195,11 +211,17 @@ export default function PlayerView() {
                     <p className="text-horror-text group-hover:text-white transition-colors">
                       {choice.text}
                     </p>
-                    {choice.cost > 0 && (
-                      <p className="text-xs text-horror-textMuted mt-1">
-                        代价：{'💰'.repeat(choice.cost)}
-                      </p>
-                    )}
+                    <div className="flex items-center gap-3 mt-1">
+                      {choice.cost > 0 && (
+                        <span className="text-xs text-horror-textMuted">代价：{'💰'.repeat(choice.cost)}</span>
+                      )}
+                      {choice.delayedConsequence && (
+                        <span className="text-xs text-horror-bloodLight flex items-center gap-1">
+                          <Skull size={10} />
+                          延迟 {choice.delayedConsequence.delayScenes} 幕
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <SkipForward size={18} className="text-horror-textMuted opacity-0 group-hover:opacity-100 transition-opacity" />
                 </div>
@@ -213,7 +235,6 @@ export default function PlayerView() {
 
   const renderFeedback = () => {
     if (!currentFeedback) return null;
-
     return (
       <div className="animate-fade-in">
         <Typewriter
@@ -237,7 +258,6 @@ export default function PlayerView() {
 
   const renderEnding = () => {
     if (!currentEnding) return null;
-
     return (
       <div className="animate-fade-in text-center">
         <div className="mb-6">
@@ -281,7 +301,6 @@ export default function PlayerView() {
 
   const renderCurseEffect = () => {
     if (!showCurseEffect || !triggeredCurse) return null;
-
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 animate-fade-in">
         <div className="text-center animate-glitch max-w-lg p-8">
@@ -289,13 +308,9 @@ export default function PlayerView() {
           <h2 className="font-gothic text-4xl text-horror-bloodLight text-shadow-blood mb-4">
             {triggeredCurse.name}
           </h2>
-          <p className="text-xl text-horror-text mb-2">
-            {triggeredCurse.description}
-          </p>
+          <p className="text-xl text-horror-text mb-2">{triggeredCurse.description}</p>
           {triggeredCurse.visualEffect && (
-            <p className="text-horror-textMuted italic">
-              {triggeredCurse.visualEffect}
-            </p>
+            <p className="text-horror-textMuted italic">{triggeredCurse.visualEffect}</p>
           )}
         </div>
         <div className="absolute inset-0 pointer-events-none overflow-hidden">
@@ -324,13 +339,10 @@ export default function PlayerView() {
         }}
       />
 
-      {showVoting && currentScene && (
+      {phase === 'voting' && currentScene && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
           <div className="w-full max-w-xl">
-            <VotingPanel
-              choices={getChoices()}
-              onVoteComplete={handleVoteComplete}
-            />
+            <VotingPanel choices={getChoices()} onVoteComplete={handleVoteComplete} />
           </div>
         </div>
       )}
@@ -339,6 +351,7 @@ export default function PlayerView() {
 
       <div className="relative z-10 max-w-4xl w-full">
         {phase === 'scene' && renderSceneContent()}
+        {phase === 'choice' && renderSceneContent()}
         {phase === 'feedback' && renderFeedback()}
         {phase === 'ending' && renderEnding()}
       </div>
@@ -351,7 +364,7 @@ export default function PlayerView() {
         </div>
       )}
       
-      <div className="fixed bottom-4 right-4">
+      <div className="fixed bottom-4 right-4 flex items-center gap-2">
         <button
           onClick={handleRestart}
           className="horror-btn text-xs flex items-center gap-1 opacity-50 hover:opacity-100 transition-opacity"

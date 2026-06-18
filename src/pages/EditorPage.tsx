@@ -3,16 +3,18 @@ import CardPanel from '@/components/editor/CardPanel';
 import Canvas from '@/components/editor/Canvas';
 import PropertyPanel from '@/components/editor/PropertyPanel';
 import NarrativeGuide from '@/components/guide/NarrativeGuide';
+import StructureCheck from '@/components/editor/StructureCheck';
 import ModeToggle from '@/components/common/ModeToggle';
 import { useStoryStore } from '@/store/useStoryStore';
+import { CheckSquare, BookOpen } from 'lucide-react';
 
 export default function EditorPage() {
-  const [showGuide, setShowGuide] = useState(true);
+  const [rightPanel, setRightPanel] = useState<'edit' | 'guide' | 'structure'>('edit');
   const { cards } = useStoryStore();
 
   useEffect(() => {
     if (cards.length === 0) {
-      setShowGuide(true);
+      setRightPanel('edit');
     }
   }, [cards.length]);
 
@@ -24,24 +26,41 @@ export default function EditorPage() {
         <CardPanel />
         
         <div className="flex-1 flex flex-col overflow-hidden relative">
-          <div className="absolute top-4 right-4 z-30">
+          <div className="absolute top-4 right-4 z-30 flex items-center gap-1">
             <button
-              onClick={() => setShowGuide(!showGuide)}
-              className="horror-btn text-xs"
+              onClick={() => setRightPanel('edit')}
+              className={`horror-btn text-xs flex items-center gap-1 ${rightPanel === 'edit' ? 'ring-1 ring-horror-accent' : ''}`}
             >
-              {showGuide ? '隐藏引导' : '显示引导'}
+              ✏️ 编辑
+            </button>
+            <button
+              onClick={() => setRightPanel('structure')}
+              className={`horror-btn text-xs flex items-center gap-1 ${rightPanel === 'structure' ? 'ring-1 ring-horror-accent' : ''}`}
+            >
+              <CheckSquare size={12} />
+              结构检查
+            </button>
+            <button
+              onClick={() => setRightPanel('guide')}
+              className={`horror-btn text-xs flex items-center gap-1 ${rightPanel === 'guide' ? 'ring-1 ring-horror-accent' : ''}`}
+            >
+              <BookOpen size={12} />
+              叙事引导
             </button>
           </div>
           
           <div className="flex-1 flex overflow-hidden">
             <Canvas />
-            <PropertyPanel />
             
-            {showGuide && (
-              <div className="absolute right-80 top-0 bottom-0 w-72 z-20">
-                <NarrativeGuide />
-              </div>
-            )}
+            <div className="w-80 bg-horror-surface border-l border-horror-border overflow-y-auto">
+              {rightPanel === 'edit' && <PropertyPanel />}
+              {rightPanel === 'structure' && <StructureCheck />}
+              {rightPanel === 'guide' && (
+                <div className="p-4">
+                  <NarrativeGuide />
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

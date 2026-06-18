@@ -1,13 +1,38 @@
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { useStoryStore } from '@/store/useStoryStore';
 import DraggableCard from './DraggableCard';
 import type { CardType, StoryCard } from '@/types/story';
 
+function isValidConnection(fromCard: StoryCard | undefined, toCard: StoryCard | undefined): boolean {
+  if (!fromCard || !toCard) return false;
+  if (fromCard.id === toCard.id) return false;
+  const allowed: Record<string, string[]> = {
+    scene: ['choice'],
+    choice: ['scene', 'ending'],
+    curse: [],
+    ending: [],
+  };
+  return allowed[fromCard.type]?.includes(toCard.type) ?? false;
+}
+
 export default function Canvas() {
-  const { cards, connections, addCard, addConnection, removeConnection, setActiveCard } = useStoryStore();
+  const { cards, connections, addCard, addConnection, removeConnection, setActiveCard, activeCardId } = useStoryStore();
   const [isDragOver, setIsDragOver] = useState(false);
   const [connectingFrom, setConnectingFrom] = useState<string | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!connectingFrom) return;
+    const handleMove = (e: MouseEvent) => {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      setMousePos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
+    };
+    document.addEventListener('mousemove', handleMove);
+    return () => document.removeEventListener('mousemove', handleMove);
+  }, [connectingFrom]);
 
   const handleDragOver = (e: React.DragEvent) => {
     e.preventDefault();
@@ -41,47 +66,30 @@ export default function Canvas() {
       setActiveCard(null);
       if (connectingFrom) {
         setConnectingFrom(null);
+        setMousePos(null);
       }
     }
   };
 
-  const handleConnectStart = (cardId: string) => {
+  const handleConnectClick = (cardId: string) => {
     if (connectingFrom) {
       if (connectingFrom !== cardId) {
-        const exists = connections.some(
-          c => c.from === connectingFrom && c.to === cardId
-        );
+        const fromCard = cards.find(c => c.id === connectingFrom);
+        const toCard = cards.find(c => c.id === cardId);
+        const exists = connections.some(c => c.from === connectingFrom && c.to === cardId);
+
         if (exists) {
           removeConnection(connectingFrom, cardId);
-        } else {
+        } else if (isValidConnection(fromCard, toCard)) {
           addConnection(connectingFrom, cardId);
-          
-          const fromCard = cards.find(c => c.id === connectingFrom);
-          const toCard = cards.find(c => c.id === cardId);
-          
-          if (fromCard?.type === 'scene' && toCard?.type === 'choice') {
-            const scene = fromCard;
-            if (!scene.nextChoices.includes(cardId)) {
-              useStoryStore.getState().updateCard(connectingFrom, {
-                nextChoices: [...scene.nextChoices, cardId],
-              });
-            }
-          }
-          
-          if (fromCard?.type === 'choice') {
-            if (toCard?.type === 'scene') {
-              useStoryStore.getState().updateCard(connectingFrom, {
-                nextSceneId: cardId,
-              });
-            } else if (toCard?.type === 'ending') {
-              useStoryStore.getState().updateCard(connectingFrom, {
-                endingId: cardId,
-              });
-            }
-          }
+        } else {
+          const fromLabel = fromCard?.type === 'scene' ? '场景' : fromCard?.type === 'choice' ? '选择' : fromCard?.type === 'curse' ? '诅咒' : '结局';
+          const toLabel = toCard?.type === 'scene' ? '场景' : toCard?.type === 'choice' ? '选择' : toCard?.type === 'curse' ? '诅咒' : '结局';
+          alert(`无法连接：${fromLabel} → ${toLabel}\n有效连接：场景→选择，选择→场景/结局`);
         }
       }
       setConnectingFrom(null);
+      setMousePos(null);
     } else {
       setConnectingFrom(cardId);
     }
@@ -94,6 +102,13 @@ export default function Canvas() {
     };
   };
 
+  const getConnectionLabel = (fromCard: StoryCard, toCard: StoryCard) => {
+    if (fromCard.type === 'scene' && toCard.type === 'choice') return '→';
+    if (fromCard.type === 'choice' && toCard.type === 'scene') return '→';
+    if (fromCard.type === 'choice' && toCard.type === 'ending') return '⬇';
+    return '';
+  };
+
   const renderConnections = () => {
     return connections.map((conn, index) => {
       const fromCard = cards.find(c => c.id === conn.from);
@@ -103,40 +118,100 @@ export default function Canvas() {
       const from = getCardCenter(fromCard);
       const to = getCardCenter(toCard);
 
-      const midX = (from.x + to.x) / 2;
-      const midY = (from.y + to.y) / 2;
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      const nx = -dy / dist;
+      const ny = dx / dist;
+      const curveOffset = Math.min(40, dist * 0.2);
+      const cpX = (from.x + to.x) / 2 + nx * curveOffset;
+      const cpY = (from.y + to.y) / 2 + ny * curveOffset;
+
+      const isActive = activeCardId === conn.from || activeCardId === conn.to;
 
       return (
-        <g key={index}>
+        <g key={`${conn.from}-${conn.to}`}>
           <path
-            d={`M ${from.x} ${from.y} Q ${midX} ${midY - 30} ${to.x} ${to.y}`}
-            className="connection-line"
-            strokeDasharray="5,5"
-            onClick={(e) => {
-              e.stopPropagation();
-              if (confirm('删除此连接？')) {
-                removeConnection(conn.from, conn.to);
-              }
-            }}
+            d={`M ${from.x} ${from.y} Q ${cpX} ${cpY} ${to.x} ${to.y}`}
+            fill="none"
+            stroke={isActive ? '#c9a227' : '#8b0000'}
+            strokeWidth={isActive ? 2.5 : 1.5}
+            strokeDasharray={isActive ? 'none' : '6,4'}
+            className="transition-all duration-300"
             style={{ cursor: 'pointer' }}
-          />
-          <circle
-            cx={midX}
-            cy={midY - 15}
-            r="6"
-            fill="#8b0000"
-            className="opacity-0 hover:opacity-100 transition-opacity cursor-pointer"
             onClick={(e) => {
               e.stopPropagation();
               if (confirm('删除此连接？')) {
                 removeConnection(conn.from, conn.to);
               }
             }}
+          />
+          <path
+            d={`M ${from.x} ${from.y} Q ${cpX} ${cpY} ${to.x} ${to.y}`}
+            fill="none"
+            stroke="transparent"
+            strokeWidth={12}
+            style={{ cursor: 'pointer' }}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (confirm('删除此连接？')) {
+                removeConnection(conn.from, conn.to);
+              }
+            }}
+          />
+          {(() => {
+            const t = 0.5;
+            const labelX = (1 - t) * (1 - t) * from.x + 2 * (1 - t) * t * cpX + t * t * to.x;
+            const labelY = (1 - t) * (1 - t) * from.y + 2 * (1 - t) * t * cpY + t * t * to.y;
+            const label = getConnectionLabel(fromCard, toCard);
+            if (!label) return null;
+            return (
+              <text
+                x={labelX}
+                y={labelY - 8}
+                textAnchor="middle"
+                className="fill-horror-textMuted text-xs select-none pointer-events-none"
+                fontSize={10}
+              >
+                {label}
+              </text>
+            );
+          })()}
+          <circle
+            cx={to.x}
+            cy={to.y}
+            r="4"
+            fill={isActive ? '#c9a227' : '#8b0000'}
+            className="pointer-events-none"
           />
         </g>
       );
     });
   };
+
+  const renderTempLine = () => {
+    if (!connectingFrom || !mousePos) return null;
+    const fromCard = cards.find(c => c.id === connectingFrom);
+    if (!fromCard) return null;
+    const from = getCardCenter(fromCard);
+    return (
+      <line
+        x1={from.x}
+        y1={from.y}
+        x2={mousePos.x}
+        y2={mousePos.y}
+        stroke="#c9a227"
+        strokeWidth={2}
+        strokeDasharray="8,4"
+        className="animate-pulse pointer-events-none"
+      />
+    );
+  };
+
+  const fromCard = connectingFrom ? cards.find(c => c.id === connectingFrom) : null;
+  const connectHint = fromCard
+    ? `🔗 从${fromCard.type === 'scene' ? '场景' : fromCard.type === 'choice' ? '选择' : fromCard.type === 'curse' ? '诅咒' : '结局'}出发 — 点击目标卡片完成连接（点击空白取消）`
+    : '';
 
   return (
     <div
@@ -152,13 +227,11 @@ export default function Canvas() {
     >
       <div className="absolute top-4 left-4 text-horror-textMuted text-sm font-gothic z-20">
         {connectingFrom ? (
-          <span className="text-horror-accent animate-pulse">
-            🔗 点击另一张卡片建立连接，或点击空白处取消
-          </span>
+          <span className="text-horror-accent animate-pulse">{connectHint}</span>
         ) : cards.length === 0 ? (
           <span>👻 从左侧拖拽卡片到此处开始创作你的诅咒剧情</span>
         ) : (
-          <span>✏️ 点击卡片进行编辑，拖拽移动位置</span>
+          <span>✏️ 点击 🔗 按钮开始连线 | 拖拽移动卡片 | 点击编辑内容</span>
         )}
       </div>
 
@@ -168,6 +241,12 @@ export default function Canvas() {
         style={{ minWidth: '2000px', minHeight: '2000px' }}
       >
         <defs>
+          <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#8b0000" className="fill-horror-blood" />
+          </marker>
+          <marker id="arrowhead-active" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+            <polygon points="0 0, 8 3, 0 6" fill="#c9a227" />
+          </marker>
           <filter id="glow">
             <feGaussianBlur stdDeviation="2" result="coloredBlur" />
             <feMerge>
@@ -177,6 +256,7 @@ export default function Canvas() {
           </filter>
         </defs>
         <g style={{ pointerEvents: 'auto' }}>{renderConnections()}</g>
+        <g style={{ pointerEvents: 'none' }}>{renderTempLine()}</g>
       </svg>
 
       <div className="relative" style={{ minWidth: '2000px', minHeight: '2000px' }}>
@@ -184,7 +264,7 @@ export default function Canvas() {
           <DraggableCard
             key={card.id}
             card={card}
-            onConnectStart={handleConnectStart}
+            onConnectClick={handleConnectClick}
             connectingFrom={connectingFrom}
           />
         ))}
@@ -192,8 +272,12 @@ export default function Canvas() {
 
       {connectingFrom && (
         <div
-          className="fixed inset-0 bg-black/30 z-40 cursor-crosshair"
-          onClick={() => setConnectingFrom(null)}
+          className="fixed inset-0 z-30"
+          style={{ cursor: 'crosshair' }}
+          onClick={() => {
+            setConnectingFrom(null);
+            setMousePos(null);
+          }}
         />
       )}
     </div>
