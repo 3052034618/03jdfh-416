@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Vote, Users, RotateCcw, Clock } from 'lucide-react';
 import { useStoryStore } from '@/store/useStoryStore';
 import type { ChoiceCard } from '@/types/story';
@@ -13,6 +13,8 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
   const [voterId, setVoterId] = useState('');
   const [hasVoted, setHasVoted] = useState(false);
   const [countdown, setCountdown] = useState<number | null>(null);
+  const [totalSeconds, setTotalSeconds] = useState(30);
+  const votedRef = useRef(false);
 
   const totalVotes = choices.reduce((sum, choice) => {
     return sum + (votes[choice.id]?.count || 0);
@@ -20,25 +22,27 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
 
   useEffect(() => {
     if (countdown === null) return;
-    if (countdown === 0) {
+    if (countdown <= 0) {
       handleCloseVoting();
       return;
     }
-    const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+    const timer = setTimeout(() => setCountdown(c => (c !== null ? c - 1 : null)), 1000);
     return () => clearTimeout(timer);
   }, [countdown]);
 
   const handleVote = (choiceId: string) => {
+    if (!votingEnabled) return;
     if (!voterId.trim()) {
       alert('请输入你的名字/学号');
       return;
     }
-    if (hasVoted) {
+    if (hasVoted || votedRef.current) {
       alert('你已经投过票了');
       return;
     }
     castVote(choiceId, voterId.trim());
     setHasVoted(true);
+    votedRef.current = true;
   };
 
   const getWinningChoice = () => {
@@ -55,6 +59,7 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
   };
 
   const handleStartCountdown = (seconds: number) => {
+    setTotalSeconds(seconds);
     setCountdown(seconds);
   };
 
@@ -73,8 +78,16 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
     setVotingEnabled(false);
     resetVotes();
     setHasVoted(false);
+    votedRef.current = false;
     setCountdown(null);
+    setVoterId('');
   };
+
+  const progressPercent = countdown !== null && totalSeconds > 0
+    ? ((totalSeconds - countdown) / totalSeconds) * 100
+    : 0;
+
+  const isVotingOpen = votingEnabled;
 
   return (
     <div className="bg-horror-surface/95 backdrop-blur-sm rounded-xl border border-horror-border p-6 shadow-haunt animate-slide-up">
@@ -98,23 +111,25 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
             <span className="font-gothic text-2xl text-horror-bloodLight">{countdown}</span>
             <span className="text-sm text-horror-textMuted">秒后自动结束</span>
           </div>
-          <div className="h-1 bg-horror-bg rounded-full mt-2 overflow-hidden">
+          <div className="h-1.5 bg-horror-bg rounded-full mt-2 overflow-hidden">
             <div
-              className="h-full bg-horror-bloodLight transition-all duration-1000"
-              style={{ width: `${((30 - countdown) / 30) * 100}%` }}
+              className="h-full bg-horror-bloodLight transition-all duration-1000 ease-linear"
+              style={{ width: `${Math.min(100, Math.max(0, progressPercent))}%` }}
             />
           </div>
         </div>
       )}
 
-      {votingEnabled && !hasVoted && countdown === null && (
+      {isVotingOpen && !hasVoted && (
         <div className="mb-4">
+          <label className="block text-xs text-horror-textMuted mb-1.5">你的名字/学号</label>
           <input
             type="text"
             className="horror-input text-sm"
-            placeholder="输入你的名字/学号..."
+            placeholder="输入名字/学号后，点击选项投票"
             value={voterId}
             onChange={(e) => setVoterId(e.target.value)}
+            autoFocus
           />
         </div>
       )}
@@ -125,16 +140,17 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
           const percentage = totalVotes > 0 ? (voteCount / totalVotes) * 100 : 0;
           const maxCount = Math.max(...choices.map(c => votes[c.id]?.count || 0), 0);
           const isWinning = voteCount > 0 && voteCount === maxCount;
+          const votedThis = hasVoted && votes[choice.id]?.voters.includes(voterId.trim());
 
           return (
             <div key={choice.id} className="relative">
               <button
-                onClick={() => votingEnabled && !hasVoted && countdown !== null && handleVote(choice.id)}
-                disabled={!votingEnabled || (hasVoted && countdown === null)}
+                onClick={() => handleVote(choice.id)}
+                disabled={!isVotingOpen || hasVoted}
                 className={`w-full text-left p-4 rounded-lg border transition-all duration-300 relative overflow-hidden
                   ${isWinning && !votingEnabled ? 'border-horror-bloodLight bg-horror-blood/10' : 'border-horror-border bg-horror-bg'}
-                  ${votingEnabled && !hasVoted ? 'hover:border-horror-blood cursor-pointer' : 'cursor-default'}
-                  ${hasVoted && votes[choice.id]?.voters.includes(voterId.trim()) ? 'ring-2 ring-horror-accent' : ''}`}
+                  ${isVotingOpen && !hasVoted ? 'hover:border-horror-blood cursor-pointer active:scale-[0.98]' : 'cursor-default'}
+                  ${votedThis ? 'ring-2 ring-horror-accent' : ''}`}
               >
                 {totalVotes > 0 && (
                   <div
@@ -160,20 +176,27 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
                     )}
                   </div>
                 </div>
+                {votedThis && (
+                  <span className="absolute top-1 right-2 text-[10px] text-horror-accent">
+                    ✓ 你的选择
+                  </span>
+                )}
               </button>
             </div>
           );
         })}
       </div>
 
-      {votingEnabled && countdown === null && (
+      {isVotingOpen && (
         <div className="mt-4 pt-4 border-t border-horror-border space-y-3">
-          <div className="flex items-center gap-2 mb-2">
-            <span className="text-sm text-horror-textMuted">投票计时：</span>
-            <button onClick={() => handleStartCountdown(15)} className="horror-btn text-xs px-3 py-1">15秒</button>
-            <button onClick={() => handleStartCountdown(30)} className="horror-btn text-xs px-3 py-1">30秒</button>
-            <button onClick={() => handleStartCountdown(60)} className="horror-btn text-xs px-3 py-1">60秒</button>
-          </div>
+          {countdown === null && (
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-sm text-horror-textMuted">投票计时：</span>
+              <button onClick={() => handleStartCountdown(15)} className="horror-btn text-xs px-3 py-1">15秒</button>
+              <button onClick={() => handleStartCountdown(30)} className="horror-btn text-xs px-3 py-1">30秒</button>
+              <button onClick={() => handleStartCountdown(60)} className="horror-btn text-xs px-3 py-1">60秒</button>
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <button onClick={handleCancelVoting} className="horror-btn text-sm">
               取消投票
@@ -198,9 +221,9 @@ export default function VotingPanel({ choices, onVoteComplete }: VotingPanelProp
         </div>
       )}
 
-      {hasVoted && votingEnabled && countdown !== null && (
+      {hasVoted && votingEnabled && (
         <p className="text-center text-sm text-horror-accent mt-4">
-          ✓ 你已投票，请等待倒计时结束
+          ✓ 你已投票，请等待投票结束
         </p>
       )}
     </div>

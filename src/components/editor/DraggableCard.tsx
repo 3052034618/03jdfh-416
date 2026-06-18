@@ -27,10 +27,11 @@ const cardBgColors: Record<CardType, string> = {
 interface DraggableCardProps {
   card: StoryCard;
   onConnectClick?: (cardId: string) => void;
+  onCardBodyClick?: (cardId: string) => boolean;
   connectingFrom?: string | null;
 }
 
-export default function DraggableCard({ card, onConnectClick, connectingFrom }: DraggableCardProps) {
+export default function DraggableCard({ card, onConnectClick, onCardBodyClick, connectingFrom }: DraggableCardProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const cardRef = useRef<HTMLDivElement>(null);
@@ -117,10 +118,11 @@ export default function DraggableCard({ card, onConnectClick, connectingFrom }: 
     <div
       id={`card-${card.id}`}
       ref={cardRef}
-      className={`absolute w-48 cursor-move select-none transition-all duration-150
-        ${isDragging ? 'dragging z-50' : 'z-10'}
+      className={`absolute w-48 select-none transition-all duration-150
+        ${isDragging ? 'dragging z-50 cursor-move' : connectingFrom && connectingFrom !== card.id ? 'z-20 cursor-crosshair hover:scale-105' : 'z-10 cursor-move'}
         ${isActive ? 'horror-card-active scale-105' : ''}
         ${isConnecting ? 'ring-2 ring-horror-accent animate-pulse' : ''}
+        ${connectingFrom && connectingFrom !== card.id ? 'hover:ring-2 hover:ring-horror-accent/50' : ''}
         horror-card ${cardColors[card.type]} ${cardBgColors[card.type]}`}
       style={{
         left: card.x,
@@ -129,6 +131,10 @@ export default function DraggableCard({ card, onConnectClick, connectingFrom }: 
       onMouseDown={handleMouseDown}
       onClick={(e) => {
         e.stopPropagation();
+        if (connectingFrom && onCardBodyClick) {
+          const handled = onCardBodyClick(card.id);
+          if (handled) return;
+        }
         setActiveCard(card.id);
       }}
     >

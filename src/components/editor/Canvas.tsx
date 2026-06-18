@@ -71,25 +71,36 @@ export default function Canvas() {
     }
   };
 
-  const handleConnectClick = (cardId: string) => {
-    if (connectingFrom) {
-      if (connectingFrom !== cardId) {
-        const fromCard = cards.find(c => c.id === connectingFrom);
-        const toCard = cards.find(c => c.id === cardId);
-        const exists = connections.some(c => c.from === connectingFrom && c.to === cardId);
-
-        if (exists) {
-          removeConnection(connectingFrom, cardId);
-        } else if (isValidConnection(fromCard, toCard)) {
-          addConnection(connectingFrom, cardId);
-        } else {
-          const fromLabel = fromCard?.type === 'scene' ? '场景' : fromCard?.type === 'choice' ? '选择' : fromCard?.type === 'curse' ? '诅咒' : '结局';
-          const toLabel = toCard?.type === 'scene' ? '场景' : toCard?.type === 'choice' ? '选择' : toCard?.type === 'curse' ? '诅咒' : '结局';
-          alert(`无法连接：${fromLabel} → ${toLabel}\n有效连接：场景→选择，选择→场景/结局`);
-        }
-      }
+  const handleCardClickInConnectMode = (cardId: string) => {
+    if (!connectingFrom) return false;
+    if (connectingFrom === cardId) {
       setConnectingFrom(null);
       setMousePos(null);
+      return true;
+    }
+
+    const fromCard = cards.find(c => c.id === connectingFrom);
+    const toCard = cards.find(c => c.id === cardId);
+    const exists = connections.some(c => c.from === connectingFrom && c.to === cardId);
+
+    if (exists) {
+      removeConnection(connectingFrom, cardId);
+    } else if (isValidConnection(fromCard, toCard)) {
+      addConnection(connectingFrom, cardId);
+    } else {
+      const fromLabel = fromCard?.type === 'scene' ? '场景' : fromCard?.type === 'choice' ? '选择' : fromCard?.type === 'curse' ? '诅咒' : '结局';
+      const toLabel = toCard?.type === 'scene' ? '场景' : toCard?.type === 'choice' ? '选择' : toCard?.type === 'curse' ? '诅咒' : '结局';
+      alert(`无法连接：${fromLabel} → ${toLabel}\n有效连接：场景→选择，选择→场景/结局`);
+    }
+
+    setConnectingFrom(null);
+    setMousePos(null);
+    return true;
+  };
+
+  const handleConnectClick = (cardId: string) => {
+    if (connectingFrom) {
+      handleCardClickInConnectMode(cardId);
     } else {
       setConnectingFrom(cardId);
     }
@@ -265,21 +276,11 @@ export default function Canvas() {
             key={card.id}
             card={card}
             onConnectClick={handleConnectClick}
+            onCardBodyClick={handleCardClickInConnectMode}
             connectingFrom={connectingFrom}
           />
         ))}
       </div>
-
-      {connectingFrom && (
-        <div
-          className="fixed inset-0 z-30"
-          style={{ cursor: 'crosshair' }}
-          onClick={() => {
-            setConnectingFrom(null);
-            setMousePos(null);
-          }}
-        />
-      )}
     </div>
   );
 }

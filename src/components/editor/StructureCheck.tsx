@@ -133,45 +133,70 @@ export default function StructureCheck() {
 
   const findDeadEndPaths = () => {
     if (!entryScene) return [];
-    const deadEnds: { path: string[]; lastCard: StoryCard }[] = [];
+    const deadEnds: { path: StoryCard[]; lastCard: StoryCard; reason: string }[] = [];
+    const visitedPaths = new Set<string>();
 
-    const traverse = (currentId: string, path: string[], visited: Set<string>) => {
-      if (visited.has(currentId)) return;
-      visited.add(currentId);
-      const newPath = [...path, currentId];
+    const traverse = (currentId: string, path: StoryCard[], visited: Set<string>) => {
       const card = cards.find(c => c.id === currentId);
       if (!card) return;
 
-      const outgoing = getConnectedFrom(currentId);
-      const nextTargets = outgoing.filter(id => {
-        const c = cards.find(cc => cc.id === id);
-        return c?.type === 'scene' || c?.type === 'ending';
-      });
+      const pathKey = [...path.map(c => c.id), currentId].join('->');
+      if (visitedPaths.has(pathKey)) return;
+      visitedPaths.add(pathKey);
 
       if (card.type === 'ending') return;
-      if (nextTargets.length === 0) {
-        const choiceOutgoing = outgoing.filter(id => cards.find(c => c.id === id)?.type === 'choice');
-        if (choiceOutgoing.length === 0) {
-          deadEnds.push({ path: newPath, lastCard: card });
-        } else {
-          choiceOutgoing.forEach(choiceId => {
-            const choiceOut = getConnectedFrom(choiceId);
-            const hasEnd = choiceOut.some(id => {
-              const c = cards.find(cc => cc.id === id);
-              return c?.type === 'scene' || c?.type === 'ending';
-            });
-            if (!hasEnd) {
-              const choiceCard = cards.find(c => c.id === choiceId);
-              deadEnds.push({ path: [...newPath, choiceId], lastCard: choiceCard! });
-            }
-          });
-        }
+      if (visited.has(currentId)) return;
+
+      const newVisited = new Set(visited);
+      newVisited.add(currentId);
+      const newPath = [...path, card];
+
+      const outgoing = getConnectedFrom(currentId);
+
+      if (outgoing.length === 0) {
+        if (card.type === 'scene' && card.isEntry && scenes.length === 1) return;
+        deadEnds.push({
+          path: newPath,
+          lastCard: card,
+          reason: card.type === 'choice' ? '此选择没有连到下一场景或结局' : '此场景没有后续选择',
+        });
         return;
       }
 
-      outgoing.forEach(nextId => {
-        traverse(nextId, newPath, new Set(visited));
+      const hasValidNext = outgoing.some(id => {
+        const next = cards.find(c => c.id === id);
+        if (!next) return false;
+        if (card.type === 'scene' && next.type === 'choice') return true;
+        if (card.type === 'choice' && (next.type === 'scene' || next.type === 'ending')) return true;
+        return false;
       });
+
+      if (!hasValidNext) {
+        deadEnds.push({
+          path: newPath,
+          lastCard: card,
+          reason: '后续连接类型不匹配，无法形成有效剧情路线',
+        });
+        return;
+      }
+
+      let foundAnyPath = false;
+      outgoing.forEach(nextId => {
+        const next = cards.find(c => c.id === nextId);
+        if (!next) return;
+        if (card.type === 'scene' && next.type !== 'choice') return;
+        if (card.type === 'choice' && next.type !== 'scene' && next.type !== 'ending') return;
+        foundAnyPath = true;
+        traverse(nextId, newPath, newVisited);
+      });
+
+      if (!foundAnyPath) {
+        deadEnds.push({
+          path: newPath,
+          lastCard: card,
+          reason: '没有有效的后续连接',
+        });
+      }
     };
 
     traverse(entryScene.id, [], new Set());
@@ -180,13 +205,25 @@ export default function StructureCheck() {
 
   const deadEnds = findDeadEndPaths();
   deadEnds.forEach((de, i) => {
+    const pathSummary = de.path
+      .map(c => {
+        if (c.type === 'scene') return (c as SceneCard).title || '场景';
+        if (c.type === 'choice') return (c as ChoiceCard).text || '选择';
+        return '卡片';
+      })
+      .join(' → ');
+
     issues.push({
       id: `dead-end-${i}`,
       type: 'warning',
       cardId: de.lastCard.id,
       cardType: de.lastCard.type as CardType,
-      cardTitle: de.lastCard.type === 'choice' ? (de.lastCard as ChoiceCard).text || '未命名选择' : de.lastCard.type === 'scene' ? (de.lastCard as SceneCard).title || '未命名场景' : '卡片',
-      message: `路线未能到达结局，最终停在"${de.lastCard.type === 'choice' ? (de.lastCard as ChoiceCard).text?.slice(0, 20) : de.lastCard.type === 'scene' ? (de.lastCard as SceneCard).title : '卡片'}"`,
+      cardTitle: de.lastCard.type === 'choice'
+        ? (de.lastCard as ChoiceCard).text || '未命名选择'
+        : de.lastCard.type === 'scene'
+          ? (de.lastCard as SceneCard).title || '未命名场景'
+          : '卡片',
+      message: `死路：${pathSummary || '入口'} → ❌（${de.reason}）`,
     });
   });
 
